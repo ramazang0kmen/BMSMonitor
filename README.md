@@ -111,6 +111,8 @@ Cell Info register:  0x04
 │   ├── android/
 │   ├── ios/
 │   └── pubspec.yaml
+├── docs/
+│   └── images/
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -119,8 +121,8 @@ Cell Info register:  0x04
 ## ESP32 Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/esp32-bms-gateway.git
-cd esp32-bms-gateway/esp32
+git clone https://github.com/ramazang0kmen/BMSMonitor.git
+cd BMSMonitor/esp32
 ```
 
 Create the local secrets file.
@@ -246,7 +248,17 @@ The ESP32 device account must not be used for mobile login. Create a separate Fi
 
 ## Screenshots
 
-Screenshots will be added after the final mobile UI validation.
+### Flutter Mobile App
+
+| System dashboard | BMS 1 details | BMS 2 details |
+|:---:|:---:|:---:|
+| <img src="docs/images/mobile-dashboard.jpeg" alt="Flutter mobile app system dashboard" width="260"> | <img src="docs/images/mobile-bms1-detail.jpeg" alt="Flutter mobile app BMS 1 detail screen" width="260"> | <img src="docs/images/mobile-bms2-detail.jpeg" alt="Flutter mobile app BMS 2 detail screen" width="260"> |
+
+### ESP32 TFT Display
+
+| System dashboard | BMS 1 details | BMS 2 details |
+|:---:|:---:|:---:|
+| <img src="docs/images/esp32-system-dashboard.jpeg" alt="ESP32 TFT battery system dashboard" width="260"> | <img src="docs/images/esp32-bms1-detail.jpeg" alt="ESP32 TFT BMS 1 detail screen" width="260"> | <img src="docs/images/esp32-bms2-detail.jpeg" alt="ESP32 TFT BMS 2 detail screen" width="260"> |
 
 ## License
 
