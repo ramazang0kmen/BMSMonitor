@@ -68,7 +68,7 @@ void appendBmsJson(String& json, const BmsDeviceState& state, bool online) {
 }  // namespace
 
 struct FirebaseService::Impl {
-  enum class Operation : uint8_t { None, ViewerGet, StatusUpdate, LiveUpdate };
+  enum class Operation : uint8_t { None, SessionGet, StatusUpdate, LiveUpdate };
 
   WiFiClientSecure sslClient;
   AsyncClientClass asyncClient;
@@ -81,13 +81,14 @@ struct FirebaseService::Impl {
   bool initialized = false;
   bool readyWasLogged = false;
   bool operationInFlight = false;
-  uint32_t nextViewerCheckMs = 0;
+  uint32_t nextSessionCheckMs = 0;
   uint32_t nextStatusMs = 0;
   uint32_t lastTelemetryAttemptMs = 0;
   uint32_t uploadedBms1UpdateMs = 0;
   uint32_t uploadedBms2UpdateMs = 0;
   uint32_t pendingBms1UpdateMs = 0;
   uint32_t pendingBms2UpdateMs = 0;
+  uint64_t lastHandledSessionRequest = 0;
   size_t livePayloadSize = 0;
 
   Impl()
@@ -127,8 +128,9 @@ struct FirebaseService::Impl {
     }
     if (!operationResult.available()) return;
 
-    if (operation == Operation::ViewerGet) {
-      network.viewerLastSeen = strtoull(operationResult.c_str(), nullptr, 10);
+    if (operation == Operation::SessionGet) {
+      network.remoteSessionRequestedAt =
+          strtoull(operationResult.c_str(), nullptr, 10);
     } else if (operation == Operation::StatusUpdate) {
       network.lastStatusUpload = epochMs;
       if (NetworkConfig::DEBUG_FIREBASE) Serial.println("[FIREBASE] Status heartbeat uploaded");
@@ -144,23 +146,40 @@ struct FirebaseService::Impl {
     operation = Operation::None;
   }
 
-  void updateViewerState(NetworkState& network, uint64_t epochMs) {
-    const bool active = network.timeSynced && network.viewerLastSeen > 0 &&
-                        epochMs >= network.viewerLastSeen &&
-                        epochMs - network.viewerLastSeen <=
-                            NetworkConfig::REMOTE_VIEWER_TIMEOUT_MS;
-    if (active == network.remoteViewerActive) return;
-    network.remoteViewerActive = active;
-    if (active) Serial.println("[REMOTE] Viewer ACTIVE");
-    else Serial.println("[REMOTE] Viewer timeout - telemetry paused");
+  void updateRemoteSessionState(NetworkState& network, uint64_t epochMs) {
+    const uint64_t requestedAt = network.remoteSessionRequestedAt;
+    const bool newRequest = requestedAt > 0 && requestedAt != lastHandledSessionRequest;
+    if (newRequest) {
+      lastHandledSessionRequest = requestedAt;
+      network.remoteSessionExpiresAt =
+          requestedAt + NetworkConfig::REMOTE_SESSION_DURATION_MS;
+    }
+
+    const bool active = network.timeSynced && requestedAt > 0 &&
+                        epochMs >= requestedAt &&
+                        epochMs - requestedAt <
+                            NetworkConfig::REMOTE_SESSION_DURATION_MS;
+
+    if (newRequest && active) {
+      Serial.println("[REMOTE] New session requested");
+      Serial.println("[REMOTE] Session ACTIVE for 60 seconds");
+    }
+
+    if (active == network.remoteSessionActive) return;
+    const bool wasActive = network.remoteSessionActive;
+    network.remoteSessionActive = active;
+    if (wasActive && !active) {
+      Serial.println("[REMOTE] Session expired - live telemetry paused");
+    }
   }
 
-  void startViewerGet(uint32_t now) {
-    nextViewerCheckMs = now + NetworkConfig::VIEWER_CHECK_INTERVAL_MS;
+  void startSessionGet(uint32_t now) {
+    nextSessionCheckMs = now + NetworkConfig::REMOTE_SESSION_CHECK_INTERVAL_MS;
     operationResult.clear();
-    operation = Operation::ViewerGet;
+    operation = Operation::SessionGet;
     operationInFlight = true;
-    database.get(asyncClient, deviceRootPath() + "/control/viewer/lastSeen",
+    database.get(asyncClient,
+                 deviceRootPath() + "/control/remoteSession/requestedAt",
                  operationResult, false);
   }
 
@@ -249,12 +268,12 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
   }
 
   impl_->processOperation(network, epochMs);
-  impl_->updateViewerState(network, epochMs);
+  impl_->updateRemoteSessionState(network, epochMs);
   if (!ready || impl_->operationInFlight) return;
 
   if (network.timeSynced &&
-      static_cast<int32_t>(now - impl_->nextViewerCheckMs) >= 0) {
-    impl_->startViewerGet(now);
+      static_cast<int32_t>(now - impl_->nextSessionCheckMs) >= 0) {
+    impl_->startSessionGet(now);
     return;
   }
   if (network.timeSynced &&
@@ -264,7 +283,7 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
   }
   const bool freshSnapshot = bms1.lastUpdateMs != impl_->uploadedBms1UpdateMs ||
                              bms2.lastUpdateMs != impl_->uploadedBms2UpdateMs;
-  if (network.remoteViewerActive && freshSnapshot &&
+  if (network.remoteSessionActive && freshSnapshot &&
       now - impl_->lastTelemetryAttemptMs >= NetworkConfig::TELEMETRY_INTERVAL_MS) {
     impl_->startLiveUpdate(system, bms1, bms2, now);
   }

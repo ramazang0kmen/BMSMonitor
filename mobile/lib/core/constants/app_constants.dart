@@ -6,9 +6,10 @@ abstract final class AppConstants {
   static const deviceRoot = '/devices/$deviceId';
   static const statusPath = '$deviceRoot/status';
   static const livePath = '$deviceRoot/live';
-  static const viewerHeartbeatPath = '$deviceRoot/control/viewer/lastSeen';
+  static const remoteSessionRequestedAtPath =
+      '$deviceRoot/control/remoteSession/requestedAt';
 
-  static const viewerHeartbeatInterval = Duration(seconds: 5);
+  static const remoteSessionDuration = Duration(seconds: 60);
   static const gatewayOnlineTimeout = Duration(seconds: 60);
   static const liveThreshold = Duration(seconds: 5);
   static const delayedThreshold = Duration(seconds: 15);

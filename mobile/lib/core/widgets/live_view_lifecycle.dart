@@ -5,11 +5,15 @@ import '../services/app_route_observer.dart';
 class LiveViewLifecycle extends StatefulWidget {
   const LiveViewLifecycle({
     required this.onActiveChanged,
+    required this.onSessionRequested,
     required this.child,
+    this.requestOnInitialActive = true,
     super.key,
   });
 
   final ValueChanged<bool> onActiveChanged;
+  final VoidCallback onSessionRequested;
+  final bool requestOnInitialActive;
   final Widget child;
 
   @override
@@ -19,25 +23,34 @@ class LiveViewLifecycle extends StatefulWidget {
 class _LiveViewLifecycleState extends State<LiveViewLifecycle>
     with WidgetsBindingObserver, RouteAware {
   bool _routeVisible = true;
-  bool _appResumed = true;
+  bool _appResumed = false;
   bool? _lastValue;
+  bool _initialRequestSent = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _appResumed =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final route = ModalRoute.of(context);
       if (route != null) appRouteObserver.subscribe(this, route);
       _notify();
+      _requestInitialSessionIfNeeded();
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appResumed;
     _appResumed = state == AppLifecycleState.resumed;
     _notify();
+    if (!wasResumed && _appResumed && _routeVisible) {
+      widget.onSessionRequested();
+    }
   }
 
   @override
@@ -69,6 +82,17 @@ class _LiveViewLifecycleState extends State<LiveViewLifecycle>
     if (_lastValue == active) return;
     _lastValue = active;
     widget.onActiveChanged(active);
+  }
+
+  void _requestInitialSessionIfNeeded() {
+    if (_initialRequestSent ||
+        !widget.requestOnInitialActive ||
+        !_routeVisible ||
+        !_appResumed) {
+      return;
+    }
+    _initialRequestSent = true;
+    widget.onSessionRequested();
   }
 
   @override

@@ -40,7 +40,7 @@ void DashboardScreen::render(Adafruit_GFX& d, const SystemBatteryData& s,
                  DisplayConfig::BLACK);
   d.print("C");
   d.setCursor(153, 160);
-  d.setTextColor(network.remoteViewerActive ? DisplayConfig::GREEN : DisplayConfig::DARK_GREY,
+  d.setTextColor(network.remoteSessionActive ? DisplayConfig::GREEN : DisplayConfig::DARK_GREY,
                  DisplayConfig::BLACK);
   d.print("R");
 

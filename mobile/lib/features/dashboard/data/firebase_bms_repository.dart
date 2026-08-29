@@ -1,13 +1,20 @@
 import 'package:firebase_database/firebase_database.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/services/remote_session_service.dart';
 import '../domain/models/gateway_status.dart';
 import '../domain/models/live_telemetry.dart';
 
 class FirebaseBmsRepository {
-  FirebaseBmsRepository(FirebaseDatabase database) : _database = database;
+  FirebaseBmsRepository(
+    FirebaseDatabase database, {
+    RemoteSessionService? remoteSessionService,
+  }) : _database = database,
+       _remoteSessionService =
+           remoteSessionService ?? RemoteSessionService(database);
 
   final FirebaseDatabase _database;
+  final RemoteSessionService _remoteSessionService;
 
   Stream<GatewayStatus> watchStatus() {
     return _database
@@ -23,9 +30,6 @@ class FirebaseBmsRepository {
     });
   }
 
-  Future<void> sendViewerHeartbeat() {
-    return _database
-        .ref(AppConstants.viewerHeartbeatPath)
-        .set(ServerValue.timestamp);
-  }
+  Future<void> requestRemoteSession() =>
+      _remoteSessionService.requestRemoteSession();
 }

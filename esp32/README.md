@@ -3,7 +3,7 @@
 This firmware keeps persistent BLE links to the two configured JBD BMS units, polls Basic Info
 (`0x03`) and Cell Info (`0x04`), calculates the combined parallel-battery state, and renders a
 240x320 portrait dashboard plus two detail pages. It also maintains Wi-Fi, Firebase Authentication,
-an authenticated RTDB status heartbeat, and viewer-gated live telemetry without blocking local
+an authenticated RTDB status heartbeat, and session-gated live telemetry without blocking local
 monitoring.
 
 The E32R28T-1 display configuration uses the documented ST7789P3 wiring. Its XPT2046 controller
@@ -12,8 +12,8 @@ calibrated. Pages auto-rotate every 10 seconds; Serial keys `0`, `1`, and `2` se
 BMS 1 detail, and BMS 2 detail.
 
 The dashboard indicators are `W` (Wi-Fi), `C` (cloud/RTDB), and `R` (remote
-viewer). `W` and `C` are green when ready. `R` is green only while a fresh
-viewer heartbeat exists.
+session). `W` and `C` are green when ready. `R` is green during the 60-second
+live telemetry window requested by the mobile app.
 
 Copy `include/config/Secrets.example.h` to `include/config/Secrets.h` and fill
 in the local credentials. The real secrets file is ignored by Git. Firebase

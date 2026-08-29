@@ -1,3 +1,4 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -14,17 +15,21 @@ import '../domain/models/system_battery.dart';
 import 'dashboard_cubit.dart';
 
 class DashboardPage extends StatelessWidget {
-  const DashboardPage({required this.repository, super.key});
+  const DashboardPage({required this.repository, this.connectivity, super.key});
 
   final FirebaseBmsRepository repository;
+  final Connectivity? connectivity;
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => DashboardCubit(repository),
+      create: (_) => DashboardCubit(repository, connectivity: connectivity),
       child: Builder(
         builder: (context) => LiveViewLifecycle(
           onActiveChanged: context.read<DashboardCubit>().setLiveViewActive,
+          onSessionRequested: context
+              .read<DashboardCubit>()
+              .requestRemoteSession,
           child: const _DashboardView(),
         ),
       ),
@@ -41,6 +46,23 @@ class _DashboardView extends StatelessWidget {
       appBar: AppBar(
         title: const Text('BMS Monitor'),
         actions: [
+          BlocBuilder<DashboardCubit, DashboardState>(
+            buildWhen: (previous, current) =>
+                previous.sessionRequestInProgress !=
+                current.sessionRequestInProgress,
+            builder: (context, state) => IconButton(
+              tooltip: '1 dk canlı izle',
+              onPressed: state.sessionRequestInProgress
+                  ? null
+                  : context.read<DashboardCubit>().requestRemoteSession,
+              icon: state.sessionRequestInProgress
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ),
           IconButton(
             tooltip: 'Tanılama ve ayarlar',
             onPressed: () => context.push('/settings'),
@@ -73,6 +95,7 @@ class _DashboardView extends StatelessWidget {
                 online: gatewayOnline,
                 freshness: freshness,
                 wifiRssi: state.status?.wifiRssi ?? 0,
+                sessionSecondsRemaining: state.remoteSessionRemaining.inSeconds,
               ),
               if (!state.internetAvailable)
                 const _MessageBanner(
@@ -138,11 +161,13 @@ class _GatewayHeader extends StatelessWidget {
     required this.online,
     required this.freshness,
     required this.wifiRssi,
+    required this.sessionSecondsRemaining,
   });
 
   final bool online;
   final LiveFreshness freshness;
   final int wifiRssi;
+  final int sessionSecondsRemaining;
 
   @override
   Widget build(BuildContext context) {
@@ -177,6 +202,13 @@ class _GatewayHeader extends StatelessWidget {
                     'WiFi $wifiRssi dBm · ${rssiQuality(wifiRssi)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  if (sessionSecondsRemaining > 0)
+                    Text(
+                      'Canlı yayın · $sessionSecondsRemaining sn kaldı',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: colors.primary),
+                    ),
                 ],
               ),
             ),

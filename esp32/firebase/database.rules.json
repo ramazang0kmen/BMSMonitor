@@ -2,8 +2,24 @@
   "rules": {
     "devices": {
       "$deviceId": {
-        ".read": "auth != null",
-        ".write": "auth != null"
+        ".read": "auth != null && (auth.token.gateway === true || auth.token.viewer === true)",
+        "status": {
+          ".write": "auth != null && auth.token.gateway === true"
+        },
+        "live": {
+          ".write": "auth != null && auth.token.gateway === true"
+        },
+        "control": {
+          "remoteSession": {
+            "requestedAt": {
+              ".write": "auth != null && auth.token.viewer === true",
+              ".validate": "newData.isNumber() && newData.val() <= now + 5000 && newData.val() >= now - 10000"
+            },
+            "$other": { ".write": false }
+          },
+          "$other": { ".write": false }
+        },
+        "$other": { ".write": false }
       }
     }
   }

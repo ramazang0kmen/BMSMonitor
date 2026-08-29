@@ -15,8 +15,9 @@
    **Email/Password**.
 3. Under **Authentication > Users**, confirm that a dedicated Firebase
    Authentication device user exists.
-4. Apply the authenticated-only rules from
-   `firebase/database.rules.json`. Do not enable public read or write access.
+4. Assign `gateway: true` to the device account and `viewer: true` to mobile
+   users from a trusted Admin SDK environment, then apply the claim-based rules
+   from `firebase/database.rules.json`. Do not enable public read or write access.
 5. Keep the real Wi-Fi and Firebase credentials only in the ignored
    `include/config/Secrets.h` file. Copy `Secrets.example.h` when setting up a
    new checkout.
@@ -24,13 +25,15 @@
 ## Runtime paths
 
 - Status heartbeat: `/devices/home-battery-01/status`
-- Viewer heartbeat: `/devices/home-battery-01/control/viewer/lastSeen`
+- Remote session request: `/devices/home-battery-01/control/remoteSession/requestedAt`
 - Conditional live snapshot: `/devices/home-battery-01/live`
 
-The status heartbeat is written every 30 seconds. A viewer must update
-`control/viewer/lastSeen` with a Firebase server timestamp. Live telemetry is
-sent only while that value is no more than 15 seconds old. Historical
-snapshots are neither queued nor written to flash.
+The status heartbeat is written every 30 seconds. The mobile app writes one
+Firebase server timestamp to `control/remoteSession/requestedAt` when the
+dashboard opens, when the app resumes, or when the user requests a manual
+refresh. Live telemetry is sent for 60 seconds measured from that server
+timestamp. The request is not renewed periodically, and historical snapshots
+are neither queued nor written to flash.
 
 ## Deploying rules
 

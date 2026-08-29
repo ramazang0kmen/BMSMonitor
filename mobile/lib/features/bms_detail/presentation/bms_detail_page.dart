@@ -27,6 +27,10 @@ class BmsDetailPage extends StatelessWidget {
       child: Builder(
         builder: (context) => LiveViewLifecycle(
           onActiveChanged: context.read<DashboardCubit>().setLiveViewActive,
+          onSessionRequested: context
+              .read<DashboardCubit>()
+              .requestRemoteSession,
+          requestOnInitialActive: false,
           child: _BmsDetailView(bmsNumber: bmsNumber),
         ),
       ),

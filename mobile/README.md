@@ -10,7 +10,7 @@ ESP32 BMS gateway'in Firebase Realtime Database telemetrisini Android ve iOS'ta 
 - Android/iOS kimliği: `com.ramazangokmen.bmsmonitor`
 - Status: `/devices/home-battery-01/status`
 - Live: `/devices/home-battery-01/live`
-- Viewer heartbeat: `/devices/home-battery-01/control/viewer/lastSeen`
+- Remote session request: `/devices/home-battery-01/control/remoteSession/requestedAt`
 
 Verilen web ayarları `lib/firebase_options.dart` içinde açık Firebase client config olarak bulunur. Production/native kurulum için Firebase Console'da aynı package/bundle ID ile Android ve iOS uygulamalarını kaydedin, ardından Firebase CLI ve FlutterFire CLI kurulu bir ortamda proje kökünden çalıştırın:
 
@@ -38,13 +38,13 @@ Debug APK çıktısı `build/app/outputs/flutter-apk/app-debug.apk` yolundadır.
 
 Gateway online durumu `status.online` yerine `now - status.lastSeen <= 60 saniye` ile hesaplanır. Live timestamp yaşı 0–5 saniye CANLI, 5–15 saniye GECİKMELİ, 15 saniye üzeri VERİ ESKİ olarak gösterilir; gateway timeout'u OFFLINE durumunu önceler.
 
-Dashboard veya BMS detay ekranı görünür ve uygulama foreground iken heartbeat hemen, sonra 5 saniyede bir `ServerValue.timestamp` ile gönderilir. Başka bir route açılınca, uygulama background olunca ya da ekran dispose edilince heartbeat ve live subscription durur. Foreground/görünür duruma dönüşte yeniden başlar. Status stream tanılama için sürekli dinlenebilir.
+Dashboard ilk açıldığında veya uygulama background'dan foreground'a döndüğünde `control/remoteSession/requestedAt` alanına bir kez `ServerValue.timestamp` yazılır. ESP32 bu istekten itibaren 60 saniye canlı telemetri gönderir. Uygulama foreground'da açık kaldığı sürece periyodik write yapılmaz. Kullanıcı dashboard'daki **1 dk canlı izle** butonuyla yeni bir oturum isteyebilir. Live subscription görünür ekran süresince, status stream ise tanılama için sürekli dinlenebilir.
 
 RTDB stream olduğu için pull-to-refresh yoktur. Bağlantı kesilirse son bilinen değer korunur ve UI çevrimdışı/eski veri olarak etiketler.
 
 ## Güvenlik
 
-Mobil uygulama yalnız `control/viewer/lastSeen` alanına yazacak şekilde tasarlanmıştır; `status` ve `live` yalnız okunur. İstemci davranışı tek başına güvenlik sınırı değildir. Production RTDB rules önerisi için [FIREBASE_RULES_RECOMMENDATION.md](docs/FIREBASE_RULES_RECOMMENDATION.md) dosyasını uygulayın ve UID yer tutucularını değiştirin.
+Mobil uygulama yalnız `control/remoteSession/requestedAt` alanına yazacak şekilde tasarlanmıştır; `status` ve `live` yalnız okunur. İstemci davranışı tek başına güvenlik sınırı değildir. Production RTDB rules önerisi için [FIREBASE_RULES_RECOMMENDATION.md](docs/FIREBASE_RULES_RECOMMENDATION.md) dosyasını uygulayın ve gerekli custom claim'leri tanımlayın.
 
 Firebase API key gizli bir sunucu parolası değildir; yine de Firebase rules ve Authentication zorunludur. Mobil veya ESP32 kullanıcı parolaları kaynak kodda tutulmamalıdır.
 
@@ -54,4 +54,4 @@ JBD akım yönü gerçek yük altında henüz fiziksel olarak doğrulanmadı. T�
 
 ## Testler
 
-`test/fixtures/live_telemetry.json` gerçek örnek yapıyı içerir. Birim testleri int/double dönüşümü, eksik alan, boş/sparse hücreler, offline veri, protection flags, freshness sınırları ve heartbeat timer yaşam döngüsünü kapsar.
+`test/fixtures/live_telemetry.json` gerçek örnek yapıyı içerir. Birim testleri int/double dönüşümü, eksik alan, boş/sparse hücreler, offline veri, protection flags, freshness sınırları, tek seferlik server timestamp isteği, lifecycle resume ve manuel session yenilemeyi kapsar.

@@ -27,7 +27,7 @@ An open-source battery monitoring system that reads two JBD/Jiabaida-compatible 
 - Individual cell voltage visualization
 - SOC mismatch warnings
 - BMS temperature, MOS, balancing, protection, and RSSI monitoring
-- App lifecycle-aware viewer heartbeat
+- One-shot 60-second remote monitoring sessions
 - Material 3 and system dark mode
 
 ## Architecture
@@ -165,13 +165,13 @@ control/
 live/
 ```
 
-The development rules are in `esp32/firebase/database.rules.json`. Review `mobile/docs/FIREBASE_RULES_RECOMMENDATION.md` before production deployment.
+The claim-based rules template is in `esp32/firebase/database.rules.json`. Assign the `gateway` and `viewer` custom claims from a trusted Admin SDK environment before deployment, and review `mobile/docs/FIREBASE_RULES_RECOMMENDATION.md` for details.
 
-## Viewer-Controlled Telemetry
+## Session-Controlled Telemetry
 
-While a live mobile screen is visible, the app writes a Firebase server timestamp to `control/viewer/lastSeen` every five seconds. The ESP32 sets `remoteViewerActive = true` while that timestamp is no more than 15 seconds old and uploads `live/` telemetry only in that state.
+When the Flutter application opens or returns to the foreground, it writes one Firebase server timestamp to `devices/{deviceId}/control/remoteSession/requestedAt`. The ESP32 detects the request and enables live telemetry for 60 seconds.
 
-When the app closes or moves to the background, the heartbeat stops. Approximately 15 seconds later the ESP32 stops live uploads, reducing unnecessary Firebase network usage. The status heartbeat remains independent.
+After 60 seconds, live telemetry uploads automatically stop without deleting the last `live/` snapshot. Opening or resuming the app, or pressing the manual **1 dk canlı izle** action, starts another 60-second monitoring window. The app does not periodically renew a session while it remains in the foreground, and the status heartbeat remains independent.
 
 ## Mobile Setup
 
@@ -224,7 +224,7 @@ The ESP32 device account must not be used for mobile login. Create a separate Fi
 - `Secrets.h` is ignored by Git.
 - Never commit Wi-Fi passwords or Firebase device credentials.
 - RTDB must never use public read/write rules.
-- Mobile users should only read telemetry and write the viewer heartbeat.
+- Mobile users should only read telemetry and write remote session requests.
 - The gateway identity should be the only identity allowed to write `status` and `live`.
 - Production deployments should use stricter UID or custom-claims-based rules.
 
@@ -233,7 +233,7 @@ The ESP32 device account must not be used for mobile login. Create a separate Fi
 - Touch panel calibration may vary between board revisions.
 - Current sign convention should be verified under real charging/discharging load.
 - SOC accuracy depends on the BMS coulomb counter and calibration.
-- The viewer heartbeat uses one shared `lastSeen` field.
+- The remote session request uses one shared `requestedAt` field.
 - Production Firebase rules require device/user role separation.
 
 ## Project Status
