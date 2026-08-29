@@ -1,0 +1,6 @@
+{
+  "timestamp": 1787944736309,
+  "system": {"voltage": 26.31, "current": 0, "power": 0.0, "soc": 32.62, "remainingAh": 65.24, "totalCapacityAh": 200, "socMismatch": true, "socDelta": 33.0},
+  "bms1": {"online": true, "name": "PPD26C0259", "rssi": -66, "voltage": 26.3, "current": 0, "power": 0.0, "soc": 17, "remainingAh": 16.37, "capacityAh": 100, "temperature1": 24.7, "temperature2": 25, "temperature3": 24.4, "minCellVoltage": 3.286, "maxCellVoltage": 3.289, "cellDeltaMv": 3, "chargeMos": true, "dischargeMos": true, "balancing": false, "protectionFlags": 0, "cells": [3.288,3.289,3.286,3.286,3.289,3.289,3.289,3.287]},
+  "bms2": {"online": true, "name": "PPD25L0232", "rssi": -67, "voltage": 26.31, "current": 0.0, "power": 0, "soc": 50, "remainingAh": 48.87, "capacityAh": 100.0, "temperature1": 26.1, "temperature2": 25.2, "temperature3": 25.1, "minCellVoltage": 3.288, "maxCellVoltage": 3.292, "cellDeltaMv": 4, "chargeMos": true, "dischargeMos": true, "balancing": false, "protectionFlags": 0, "cells": [3.290,3.289,3.290,3.289,3.290,3.288,3.289,3.292]}
+}

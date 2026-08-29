@@ -1,0 +1,18 @@
+abstract final class AppConstants {
+  static const appName = 'BMS Monitor';
+  static const deviceId = 'home-battery-01';
+  static const databaseUrl =
+      'https://bmsapp-3bcff-default-rtdb.europe-west1.firebasedatabase.app/';
+  static const deviceRoot = '/devices/$deviceId';
+  static const statusPath = '$deviceRoot/status';
+  static const livePath = '$deviceRoot/live';
+  static const viewerHeartbeatPath = '$deviceRoot/control/viewer/lastSeen';
+
+  static const viewerHeartbeatInterval = Duration(seconds: 5);
+  static const gatewayOnlineTimeout = Duration(seconds: 60);
+  static const liveThreshold = Duration(seconds: 5);
+  static const delayedThreshold = Duration(seconds: 15);
+
+  // Flip this once the JBD sign convention is verified under a real load.
+  static const invertCurrentSign = false;
+}

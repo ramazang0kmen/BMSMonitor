@@ -1,0 +1,90 @@
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# Secrets
+# =========================
+esp32/include/config/Secrets.h
+**/Secrets.h
+.env
+.env.*
+!.env.example
+
+# =========================
+# PlatformIO / ESP32
+# =========================
+esp32/.pio/
+esp32/.vscode/
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# =========================
+# Flutter / Dart
+# =========================
+.dart_tool/
+.dart_appdata/
+.dart_localappdata/
+.packages
+.pub/
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# =========================
+# Flutter builds
+# =========================
+build/
+**/build/
+
+# =========================
+# Android
+# =========================
+mobile/android/.gradle/
+mobile/android/.idea/
+mobile/android/.kotlin/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/android/app/upload-keystore.jks
+mobile/android/app/*.jks
+*.keystore
+*.jks
+
+# =========================
+# iOS / macOS
+# =========================
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/ephemeral/
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/ios/Runner.xcworkspace/xcuserdata/
+mobile/ios/Runner.xcodeproj/xcuserdata/
+DerivedData/
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+*.tmp
+*.bak
+*.swp
+
+# =========================
+# APK / IPA
+# =========================
+*.apk
+*.aab
+*.ipa
