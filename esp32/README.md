@@ -31,3 +31,21 @@ platformio device monitor --port COM9 --baud 115200
 
 Close the phone's **JBM BMS** app before testing. Some Bluetooth BMS modules accept only one BLE
 client, so a phone connection can prevent the ESP32 from connecting.
+
+## Firebase resilience diagnostics
+
+Each RTDB operation has a 10-second deadline. A timed-out task is cancelled with
+FirebaseClient's asynchronous task API and retried with bounded backoff; the ESP32 is not
+restarted, and BLE/TFT monitoring remains independent. Control-read and cloud-write progress are
+tracked separately so an inactive remote session is not mistaken for a failure.
+
+Verbose 30-second health lines are disabled in production builds. Enable them for a soak test with:
+
+```powershell
+$env:PLATFORMIO_BUILD_FLAGS = '-DDEBUG_FIREBASE_HEALTH=1'
+platformio run --target upload --upload-port COM9
+```
+
+Health output reports Wi-Fi/IP/RSSI, time sync, Firebase authentication and token TTL, RTDB task
+state, control-read/write ages, maximum service-loop gap, heap/minimum heap/largest free block, and
+remote-session state. It never prints credentials or token contents.

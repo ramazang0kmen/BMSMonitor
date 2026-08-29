@@ -5,7 +5,27 @@
 #include "config/NetworkConfig.h"
 #include "config/Secrets.h"
 
+namespace {
+void logWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.println("[WIFI][EVENT] STA connected to access point");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.printf("[WIFI][EVENT] IP acquired: %s\n", WiFi.localIP().toString().c_str());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.printf("[WIFI][EVENT] STA disconnected | reason=%u\n",
+                    static_cast<unsigned>(info.wifi_sta_disconnected.reason));
+      break;
+    default:
+      break;
+  }
+}
+}  // namespace
+
 void GatewayWiFiManager::begin(uint32_t now) {
+  WiFi.onEvent(logWiFiEvent);
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
