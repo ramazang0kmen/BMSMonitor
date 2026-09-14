@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <esp_system.h>
 
 #include "ble/BmsManager.h"
 #include "config/NetworkConfig.h"
@@ -49,6 +50,25 @@ void printHeapData(uint32_t now) {
   Serial.printf("[SYSTEM] Free heap: %.1f KB | Min heap: %.1f KB\n",
                 ESP.getFreeHeap() / 1024.0f, ESP.getMinFreeHeap() / 1024.0f);
 }
+
+}  // namespace
+
+namespace {
+const char* resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXTERNAL_PIN";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INTERRUPT_WATCHDOG";
+    case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
+    case ESP_RST_WDT: return "OTHER_WATCHDOG";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP_WAKE";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "UNKNOWN";
+  }
+}
 }  // namespace
 
 void setup() {
@@ -56,6 +76,13 @@ void setup() {
   delay(300);
   Serial.println("\nESP32 BMS Gateway");
   Serial.printf("Firmware: %s\n", NetworkConfig::FIRMWARE_VERSION);
+  // Diagnostic evidence for point 18/34: was this boot caused by a crash,
+  // panic or watchdog timeout, or a normal power-on? This never triggers a
+  // restart itself - it only reports why the *previous* boot ended, so it
+  // is safe to log unconditionally and cheap to correlate against long-run
+  // test logs.
+  Serial.printf("[BOOT] Reset reason: %s (%d)\n",
+                resetReasonName(esp_reset_reason()), static_cast<int>(esp_reset_reason()));
   NimBLEDevice::init("");
   NimBLEDevice::setPower(3);
   const uint32_t now = millis();

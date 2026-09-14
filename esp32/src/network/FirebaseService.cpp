@@ -14,6 +14,14 @@
 namespace {
 String deviceRootPath() { return String("/devices/") + DEVICE_ID; }
 
+// millis()-domain "which timestamp is more recent", wrap-safe, treating 0 as
+// "never".
+uint32_t laterOf(uint32_t a, uint32_t b) {
+  if (a == 0) return b;
+  if (b == 0) return a;
+  return static_cast<int32_t>(a - b) >= 0 ? a : b;
+}
+
 bool isBmsOnline(const BmsDeviceState& state, uint32_t now) {
   return state.connected && state.lastUpdateMs != 0 &&
          now - state.lastUpdateMs <= BmsConfig::DATA_STALE_MS;
@@ -84,6 +92,10 @@ struct FirebaseService::Impl {
   bool readyWasLogged = false;
   bool operationInFlight = false;
   bool queueDraining = false;
+  // Recovery scheduled a retry (backoff armed) but it has not been issued yet.
+  // While this is set, serviceWatchdog must not re-evaluate staleness and
+  // re-arm the backoff - otherwise the retry it is waiting for never runs.
+  bool recoveryRetryPending = false;
   HealthState healthState = HealthState::Starting;
   uint32_t operationStartedMs = 0;
   uint32_t lastUpdateCallMs = 0;
@@ -100,12 +112,29 @@ struct FirebaseService::Impl {
   uint32_t nextSessionCheckMs = 0;
   uint32_t nextStatusMs = 0;
   uint32_t lastTelemetryAttemptMs = 0;
+  uint32_t remoteSessionActivatedMs = 0;
   uint32_t uploadedBms1UpdateMs = 0;
   uint32_t uploadedBms2UpdateMs = 0;
   uint32_t pendingBms1UpdateMs = 0;
   uint32_t pendingBms2UpdateMs = 0;
   uint64_t lastHandledSessionRequest = 0;
   size_t livePayloadSize = 0;
+
+  // --- Diagnostics / per-channel health (added in 0.4.2-stability) ---
+  // asyncClient.stopAsync() only *marks* a queued/running task for removal;
+  // it does not touch the underlying socket (see cancelStuckOperation()).
+  // queueDrainStartedMs bounds how long we wait for taskCount() to reach 0
+  // before we stop trusting the library to clean up after itself.
+  uint32_t queueDrainStartedMs = 0;
+  uint32_t lastAuthSuccessMs = 0;
+  uint32_t controlReadFailCount = 0;
+  uint32_t statusWriteFailCount = 0;
+  uint32_t liveWriteFailCount = 0;
+  uint32_t firebaseErrorCount = 0;
+  uint32_t totalRecoveryCount = 0;
+  uint32_t forcedSocketCloseCount = 0;
+  int lastErrorCode = 0;
+  String lastErrorMessage;
 
   Impl()
       : asyncClient(sslClient),
@@ -138,6 +167,7 @@ struct FirebaseService::Impl {
       } else if (code == auth_event_ready && authRefreshInProgress) {
         authRefreshInProgress = false;
         authRefreshWindowLogged = false;
+        lastAuthSuccessMs = millis();
         Serial.printf("[AUTH] Token refreshed successfully | ttl=%lu s\n", app.ttl());
       }
     }
@@ -184,6 +214,7 @@ struct FirebaseService::Impl {
     healthState = HealthState::Healthy;
     recoveryAttempt = 0;
     nextRecoveryMs = 0;
+    recoveryRetryPending = false;
   }
 
   void processOperation(NetworkState& network, uint32_t now, uint64_t epochMs) {
@@ -194,9 +225,16 @@ struct FirebaseService::Impl {
                     operationResult.eventLog().code());
     }
     if (operationResult.isError()) {
-      Serial.printf("[FIREBASE][ERROR] %s failed after %lu ms: %s (%d)\n",
+      ++firebaseErrorCount;
+      lastErrorCode = operationResult.error().code();
+      lastErrorMessage = operationResult.error().message();
+      if (operation == Operation::SessionGet) ++controlReadFailCount;
+      else if (operation == Operation::StatusUpdate) ++statusWriteFailCount;
+      else if (operation == Operation::LiveUpdate) ++liveWriteFailCount;
+      Serial.printf("[FIREBASE][ERROR] %s failed after %lu ms: %s (%d) | retry=%u\n",
                     operationName(), static_cast<unsigned long>(now - operationStartedMs),
-                    operationResult.error().message().c_str(), operationResult.error().code());
+                    lastErrorMessage.c_str(), lastErrorCode,
+                    static_cast<unsigned>(recoveryAttempt));
       finishOperation();
       return;
     }
@@ -226,6 +264,16 @@ struct FirebaseService::Impl {
     finishOperation();
   }
 
+  // Cancel the in-flight (or last) RTDB task through the library's own API
+  // only. asyncClient.stopAsync(true) flags the slot for removal; the library
+  // frees it and re-opens a fresh TCP+TLS session by itself on the next
+  // request (conn_handler::connect() calls client->stop() then client->connect()
+  // internally). We must NOT call sslClient.stop() here: closing the socket
+  // behind FirebaseClient's back leaves its connection state machine
+  // inconsistent and every subsequent operation hangs forever with no
+  // callback and no error (reproduced on hardware - Firebase went permanently
+  // silent ~2 minutes after the first such cancel, 20+ recovery attempts,
+  // zero successful operations).
   void cancelStuckOperation(uint32_t now, const char* reason) {
     if (operationInFlight) {
       Serial.printf("[FIREBASE][WARN] Cancelling %s after %lu ms (%s)\n",
@@ -237,18 +285,28 @@ struct FirebaseService::Impl {
     operationResult.clear();
     finishOperation();
     queueDraining = true;
+    queueDrainStartedMs = now;
+  }
+
+  void enterRecovery(uint32_t now) {
+    healthState = HealthState::Recovering;
+    recoveryRetryPending = true;
+    ++totalRecoveryCount;
+    const uint8_t last = sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS) /
+                         sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[0]) - 1;
+    const uint8_t slot = recoveryAttempt > last ? last : recoveryAttempt;
+    const uint32_t backoff = NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[slot];
+    nextRecoveryMs = now + backoff;
+    if (recoveryAttempt < 255) ++recoveryAttempt;
+    Serial.printf("[FIREBASE] Recovery attempt %u (total %u); retry in %lu ms\n", recoveryAttempt,
+                  totalRecoveryCount, static_cast<unsigned long>(backoff));
   }
 
   void serviceWatchdog(NetworkState& network, uint32_t now, bool ready) {
     if (operationInFlight && now - operationStartedMs >=
                                  NetworkConfig::FIREBASE_OPERATION_TIMEOUT_MS) {
       cancelStuckOperation(now, "operation deadline exceeded");
-      healthState = HealthState::Recovering;
-      const uint8_t last = sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS) /
-                           sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[0]) - 1;
-      const uint8_t slot = recoveryAttempt > last ? last : recoveryAttempt;
-      nextRecoveryMs = now + NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[slot];
-      if (recoveryAttempt < 255) ++recoveryAttempt;
+      enterRecovery(now);
       if (!app.isAuthenticated() || app.isExpired()) {
         Serial.println("[AUTH] Restarting authentication after timed-out RTDB task");
         app.authenticate();
@@ -256,54 +314,132 @@ struct FirebaseService::Impl {
     }
     if (!ready || firebaseReadySinceMs == 0) return;
 
-    const uint32_t readAge = now - network.lastFirebaseReadSuccessMs;
-    const uint32_t writeAge = now - network.lastFirebaseWriteSuccessMs;
-    if (readAge >= NetworkConfig::FIREBASE_CONTROL_STALE_WARN_MS && !controlStaleWarned) {
+    // Per-channel ages are computed for DIAGNOSTICS ONLY (the DEGRADED line and
+    // the [HEALTH] scenario field). They are NOT individual recovery triggers:
+    // control-read, status-write and live-write all run over the same
+    // asyncClient/TLS socket, so a genuine transport failure stops every
+    // channel at once, whereas a single channel's age advancing on its own is
+    // routinely benign - an idle viewer, a heartbeat that is merely due, or a
+    // stale cross-session live baseline. Three earlier revisions each shipped a
+    // different false-positive from per-channel triggers (heartbeat interval ==
+    // threshold; live baseline 0; live baseline from a previous session), every
+    // one of them a self-perpetuating DEGRADED<->recovery flap. The real
+    // trigger below is "no channel has made progress at all".
+    const uint32_t controlBaseline =
+        network.lastControlReadSuccessMs == 0 ? firebaseReadySinceMs : network.lastControlReadSuccessMs;
+    const uint32_t statusBaseline =
+        network.lastStatusWriteSuccessMs == 0 ? firebaseReadySinceMs : network.lastStatusWriteSuccessMs;
+    const uint32_t controlAge = now - controlBaseline;
+    const uint32_t statusAge = now - statusBaseline;
+    const bool controlStale = controlAge >= NetworkConfig::FIREBASE_CONTROL_STALE_MS;
+    const bool statusStale = statusAge >= NetworkConfig::FIREBASE_STATUS_STALE_MS;
+
+    bool liveStale = false;
+    uint32_t liveAge = 0;
+    if (network.remoteSessionActive) {
+      // Most recent of {successful live write, live-write attempt, session
+      // start}. Using laterOf() means a live write from a session that already
+      // ended cannot serve as the baseline for a new one, and a baseline can
+      // never read as being in the future relative to `now`.
+      const uint32_t liveBaseline =
+          laterOf(laterOf(network.lastLiveWriteSuccessMs, lastTelemetryAttemptMs),
+                  remoteSessionActivatedMs);
+      if (liveBaseline != 0 && static_cast<int32_t>(now - liveBaseline) > 0) {
+        liveAge = now - liveBaseline;
+        liveStale = liveAge >= NetworkConfig::FIREBASE_LIVE_STALE_MS;
+      }
+    }
+
+    if (controlAge >= NetworkConfig::FIREBASE_CONTROL_STALE_WARN_MS && !controlStaleWarned) {
       Serial.printf("[FIREBASE][WARN] Control reads stale for %lu ms\n",
-                    static_cast<unsigned long>(readAge));
+                    static_cast<unsigned long>(controlAge));
       controlStaleWarned = true;
     }
-    if (readAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS ||
-        writeAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS ||
+
+    // Recovery already armed a backoff and is waiting to issue its retry. Do
+    // not re-evaluate here: an earlier revision re-ran cancel + re-armed the
+    // backoff on the very loop pass that would otherwise have issued the
+    // retry, so no operation was ever attempted again and the ages grew
+    // without bound (Firebase silent forever after one trip).
+    if (recoveryRetryPending) return;
+
+    // THE recovery trigger: nothing - not control-read, not status-write, not
+    // live-write - has completed for RECOVERY_THRESHOLD. A hung individual
+    // request is already handled by the 10 s operation deadline at the top of
+    // this function; this catches a transport that has quietly stopped
+    // delivering results on every channel.
+    const uint32_t lastAnyProgress = laterOf(
+        laterOf(network.lastControlReadSuccessMs, network.lastStatusWriteSuccessMs),
+        laterOf(network.lastLiveWriteSuccessMs, firebaseReadySinceMs));
+    const uint32_t noProgressMs =
+        lastAnyProgress != 0 && static_cast<int32_t>(now - lastAnyProgress) > 0
+            ? now - lastAnyProgress
+            : 0;
+    if (noProgressMs < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS ||
         static_cast<int32_t>(now - nextRecoveryMs) < 0) return;
 
+    // A request is genuinely in flight and still within its own 10 s deadline
+    // (an overrun is handled at the top of this function). Leave it alone -
+    // do not cancel a young request because a different channel's age crossed
+    // the line.
+    if (operationInFlight) {
+      healthState = HealthState::Degraded;
+      return;
+    }
+
     healthState = HealthState::Degraded;
-    Serial.printf("[FIREBASE][DEGRADED] readAge=%lu ms writeAge=%lu ms tasks=%u\n",
-                  static_cast<unsigned long>(readAge), static_cast<unsigned long>(writeAge),
-                  static_cast<unsigned>(asyncClient.taskCount()));
-    cancelStuckOperation(now, "read and write progress lost");
+    Serial.printf(
+        "[FIREBASE][DEGRADED] noProgress=%lums controlAge=%lums(stale=%d) "
+        "statusAge=%lums(stale=%d) liveAge=%lums(stale=%d,active=%d) tasks=%u\n",
+        static_cast<unsigned long>(noProgressMs),
+        static_cast<unsigned long>(controlAge), controlStale,
+        static_cast<unsigned long>(statusAge), statusStale,
+        static_cast<unsigned long>(liveAge), liveStale, network.remoteSessionActive,
+        static_cast<unsigned>(asyncClient.taskCount()));
+    cancelStuckOperation(now, "no RTDB progress on any channel");
     if (!app.isAuthenticated() || app.isExpired()) {
       Serial.println("[AUTH] Forcing authentication refresh during recovery");
       app.authenticate();
     }
-    healthState = HealthState::Recovering;
-    const uint8_t last = sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS) /
-                         sizeof(NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[0]) - 1;
-    const uint8_t slot = recoveryAttempt > last ? last : recoveryAttempt;
-    const uint32_t backoff = NetworkConfig::FIREBASE_RECOVERY_BACKOFF_MS[slot];
-    nextRecoveryMs = now + backoff;
-    if (recoveryAttempt < 255) ++recoveryAttempt;
-    Serial.printf("[FIREBASE] Recovery attempt %u; retry in %lu ms\n", recoveryAttempt,
-                  static_cast<unsigned long>(backoff));
+    enterRecovery(now);
   }
 
-  void serviceQueueDrain() {
-    if (!queueDraining || asyncClient.taskCount() != 0) return;
-    queueDraining = false;
-    Serial.println("[FIREBASE] Async RTDB queue drained");
+  // queueDraining is a bounded gate: FirebaseService::update() will not start a
+  // new control-read/status-write/live-write while it is set. taskCount()
+  // normally reaches 0 within a loop pass or two of stopAsync(true). Past the
+  // deadline we simply stop gating on it and let the library rebuild its own
+  // transport on the next request - we never close its socket ourselves (that
+  // corrupts FirebaseClient's connection state; see cancelStuckOperation).
+  void serviceQueueDrain(uint32_t now) {
+    if (!queueDraining) return;
+    if (asyncClient.taskCount() == 0) {
+      queueDraining = false;
+      Serial.println("[FIREBASE] Async RTDB queue drained");
+      return;
+    }
+    if (now - queueDrainStartedMs >= NetworkConfig::FIREBASE_QUEUE_DRAIN_TIMEOUT_MS) {
+      ++forcedSocketCloseCount;
+      Serial.printf(
+          "[FIREBASE][WARN] Queue drain deadline exceeded (tasks=%u); continuing without it\n",
+          static_cast<unsigned>(asyncClient.taskCount()));
+      asyncClient.stopAsync(true);
+      queueDraining = false;
+    }
   }
 
-  void trackAuthLifecycle(bool ready) {
+  void trackAuthLifecycle(bool ready, uint32_t now) {
     const bool authenticated = app.isAuthenticated();
     const unsigned long ttl = app.ttl();
     if (authenticated && !authWasReady) {
       Serial.printf("[AUTH] Token ready | ttl=%lu s\n", ttl);
+      lastAuthSuccessMs = now;
     } else if (!authenticated && authWasReady) {
       Serial.println("[AUTH][WARN] Token no longer authenticated");
     }
     if (ready && authenticated && previousAuthTtl > 0 && ttl > previousAuthTtl + 60) {
       Serial.printf("[AUTH] Token refreshed successfully | ttl=%lu s\n", ttl);
       authRefreshWindowLogged = false;
+      lastAuthSuccessMs = now;
     }
     if (authenticated && ttl <= 300 && !authRefreshWindowLogged) {
       Serial.printf("[AUTH] Token refresh window entered | ttl=%lu s\n", ttl);
@@ -317,31 +453,48 @@ struct FirebaseService::Impl {
     if (!NetworkConfig::DEBUG_FIREBASE_HEALTH_LOGS ||
         static_cast<int32_t>(now - nextHealthLogMs) < 0) return;
     nextHealthLogMs = now + NetworkConfig::FIREBASE_HEALTH_LOG_INTERVAL_MS;
-    const uint32_t readAge = network.lastFirebaseReadSuccessMs == 0
-                                 ? 0 : now - network.lastFirebaseReadSuccessMs;
-    const uint32_t writeAge = network.lastFirebaseWriteSuccessMs == 0
-                                  ? 0 : now - network.lastFirebaseWriteSuccessMs;
+    const uint32_t controlAge = network.lastControlReadSuccessMs == 0
+                                    ? 0 : now - network.lastControlReadSuccessMs;
+    const uint32_t statusAge = network.lastStatusWriteSuccessMs == 0
+                                    ? 0 : now - network.lastStatusWriteSuccessMs;
+    const uint32_t liveAge = network.lastLiveWriteSuccessMs == 0
+                                  ? 0 : now - network.lastLiveWriteSuccessMs;
+    const uint32_t authAge = lastAuthSuccessMs == 0 ? 0 : now - lastAuthSuccessMs;
     const bool internetReachable = network.firebaseReady &&
-        (network.lastFirebaseReadSuccessMs != 0 || network.lastFirebaseWriteSuccessMs != 0) &&
-        (readAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS ||
-         writeAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS);
+        (network.lastControlReadSuccessMs != 0 || network.lastStatusWriteSuccessMs != 0) &&
+        (controlAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS ||
+         statusAge < NetworkConfig::FIREBASE_RECOVERY_THRESHOLD_MS);
+    // Scenario classification, per the spec's Senaryo A-E table.
+    const bool controlDead = controlAge >= NetworkConfig::FIREBASE_CONTROL_STALE_MS;
+    const bool statusDead = statusAge >= NetworkConfig::FIREBASE_STATUS_STALE_MS;
+    const char* scenario = "OK";
+    if (!network.wifiConnected) scenario = "D:wifi-dead";
+    else if (!app.isAuthenticated()) scenario = "E:auth-dead";
+    else if (controlDead && statusDead) scenario = "A:firebase-dead";
+    else if (controlDead) scenario = "B:control-dead";
+    else if (statusDead) scenario = "C:write-dead";
     Serial.printf(
         "[HEALTH] up=%lus wifi=%d ip=%s rssi=%d internet=%d time=%d epoch=%llu "
-        "app=%d auth=%d rtdb=%d ttl=%lus state=%s op=%s/%d drain=%d tasks=%u gapMax=%lums "
-        "readAge=%lums writeAge=%lums heap=%u minHeap=%u largest=%u remote=%d req=%llu\n",
+        "app=%d auth=%d rtdb=%d ttl=%lus authAge=%lums state=%s scenario=%s op=%s/%d drain=%d "
+        "tasks=%u gapMax=%lums controlAge=%lums statusAge=%lums liveAge=%lums heap=%u minHeap=%u "
+        "largest=%u remote=%d req=%llu recoveryCount=%u forcedClose=%u errCount=%u "
+        "ctrlFail=%u statusFail=%u liveFail=%u lastErr=\"%s\"(%d)\n",
         static_cast<unsigned long>(now / 1000U), network.wifiConnected,
         network.ip.c_str(), network.wifiRssi, internetReachable, network.timeSynced,
         static_cast<unsigned long long>(epochMs), app.ready(), app.isAuthenticated(),
-        network.firebaseReady, app.ttl(), healthName(), operationName(), operationInFlight,
-        queueDraining,
+        network.firebaseReady, app.ttl(), static_cast<unsigned long>(authAge / 1000U),
+        healthName(), scenario, operationName(), operationInFlight, queueDraining,
         static_cast<unsigned>(asyncClient.taskCount()), static_cast<unsigned long>(maxUpdateGapMs),
-        static_cast<unsigned long>(readAge), static_cast<unsigned long>(writeAge),
+        static_cast<unsigned long>(controlAge), static_cast<unsigned long>(statusAge),
+        static_cast<unsigned long>(liveAge),
         ESP.getFreeHeap(), ESP.getMinFreeHeap(),
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), network.remoteSessionActive,
-        static_cast<unsigned long long>(network.remoteSessionRequestedAt));
+        static_cast<unsigned long long>(network.remoteSessionRequestedAt), totalRecoveryCount,
+        forcedSocketCloseCount, firebaseErrorCount, controlReadFailCount, statusWriteFailCount,
+        liveWriteFailCount, lastErrorMessage.c_str(), lastErrorCode);
   }
 
-  void updateRemoteSessionState(NetworkState& network, uint64_t epochMs) {
+  void updateRemoteSessionState(NetworkState& network, uint64_t epochMs, uint32_t now) {
     const uint64_t requestedAt = network.remoteSessionRequestedAt;
     const bool newRequest = requestedAt > 0 && requestedAt != lastHandledSessionRequest;
     if (newRequest) {
@@ -365,13 +518,20 @@ struct FirebaseService::Impl {
     if (active == network.remoteSessionActive) return;
     const bool wasActive = network.remoteSessionActive;
     network.remoteSessionActive = active;
-    if (wasActive && !active) {
+    if (!wasActive && active) {
+      // Rising edge: give the live channel a staleness baseline so it is not
+      // judged against 0 before its first write (see serviceWatchdog()). Use
+      // the loop's `now`, not a fresh millis(), so it can never read as being
+      // in the future relative to serviceWatchdog() on this same pass.
+      remoteSessionActivatedMs = now;
+    } else if (wasActive && !active) {
       Serial.println("[REMOTE] Session expired - live telemetry paused");
     }
   }
 
   void startSessionGet(uint32_t now) {
     nextSessionCheckMs = now + NetworkConfig::REMOTE_SESSION_CHECK_INTERVAL_MS;
+    recoveryRetryPending = false;
     operationResult.clear();
     operation = Operation::SessionGet;
     operationInFlight = true;
@@ -384,6 +544,7 @@ struct FirebaseService::Impl {
   void startStatusUpdate(NetworkState& network, const SystemBatteryData& system,
                          uint32_t now) {
     nextStatusMs = now + NetworkConfig::STATUS_HEARTBEAT_INTERVAL_MS;
+    recoveryRetryPending = false;
     String json;
     json.reserve(320);
     json = "{\"online\":true,\"lastSeen\":{\".sv\":\"timestamp\"},";
@@ -435,6 +596,7 @@ struct FirebaseService::Impl {
     pendingBms1UpdateMs = bms1.lastUpdateMs;
     pendingBms2UpdateMs = bms2.lastUpdateMs;
     lastTelemetryAttemptMs = now;
+    recoveryRetryPending = false;
     operationResult.clear();
     operation = Operation::LiveUpdate;
     operationInFlight = true;
@@ -460,11 +622,11 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
   if (!impl_->initialized) return;
 
   impl_->app.loop();
-  impl_->serviceQueueDrain();
+  impl_->serviceQueueDrain(now);
   impl_->processAuthResult();
   const bool ready = network.wifiConnected && impl_->app.ready();
   network.firebaseReady = ready;
-  impl_->trackAuthLifecycle(ready);
+  impl_->trackAuthLifecycle(ready, now);
   if (ready && !impl_->readyWasLogged) {
     Serial.println("[FIREBASE] Authenticated");
     Serial.println("[FIREBASE] RTDB ready");
@@ -479,11 +641,17 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
   }
 
   impl_->processOperation(network, now, epochMs);
-  impl_->updateRemoteSessionState(network, epochMs);
+  impl_->updateRemoteSessionState(network, epochMs, now);
   impl_->serviceWatchdog(network, now, ready);
   impl_->printHealth(network, now, epochMs);
   if (!ready || impl_->operationInFlight || impl_->queueDraining ||
       static_cast<int32_t>(now - impl_->nextRecoveryMs) < 0) return;
+
+  // Past every gate: the backoff has elapsed and the transport is free, so the
+  // scheduled recovery retry is about to be (or imminently will be) issued
+  // below. Release the re-entry guard now as a safety net - even if nothing is
+  // due to send this instant, serviceWatchdog may resume evaluating staleness.
+  impl_->recoveryRetryPending = false;
 
   if (network.timeSynced &&
       static_cast<int32_t>(now - impl_->nextSessionCheckMs) >= 0) {
