@@ -1,0 +1,26 @@
+rules_version = '2';
+
+// Event log written by the gateway (devices/{deviceId}/logs) and read by the
+// mobile app. Mirrors the access model the Realtime Database runs with today
+// (any signed-in account); once gateway/viewer custom claims are assigned,
+// restrict create to request.auth.token.gateway == true and read to viewers.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /devices/{deviceId}/logs/{logId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.type is string
+        && request.resource.data.type.size() <= 40
+        && request.resource.data.severity in ['info', 'warning', 'error']
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.bmsIndex in [0, 1, 2];
+      // Entries are an audit trail: never edited, and deleted only from the
+      // console.
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

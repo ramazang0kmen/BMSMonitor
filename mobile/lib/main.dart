@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -7,6 +8,7 @@ import 'app/app.dart';
 import 'core/constants/app_constants.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/dashboard/data/firebase_bms_repository.dart';
+import 'features/event_log/data/event_log_repository.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
@@ -27,6 +29,9 @@ Future<void> main() async {
           FirebaseAuth.instanceFor(app: firebaseApp),
         ),
         bmsRepository: FirebaseBmsRepository(database),
+        eventLogRepository: EventLogRepository(
+          FirebaseFirestore.instanceFor(app: firebaseApp),
+        ),
       ),
     );
   } catch (error) {

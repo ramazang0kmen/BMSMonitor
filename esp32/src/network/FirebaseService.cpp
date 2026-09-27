@@ -1,15 +1,23 @@
 #define ENABLE_USER_AUTH
 #define ENABLE_DATABASE
+#define ENABLE_FIRESTORE
 
 #include "network/FirebaseService.h"
 
 #include <FirebaseClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <time.h>
 
 #include "config/BmsConfig.h"
+#include "config/LogConfig.h"
 #include "config/NetworkConfig.h"
 #include "config/Secrets.h"
+#include "monitoring/EventLogMonitor.h"
+
+#ifndef FIREBASE_PROJECT_ID
+#error "Define FIREBASE_PROJECT_ID in include/config/Secrets.h (see Secrets.example.h)"
+#endif
 
 namespace {
 String deviceRootPath() { return String("/devices/") + DEVICE_ID; }
@@ -74,10 +82,57 @@ void appendBmsJson(String& json, const BmsDeviceState& state, bool online) {
   }
   json += "]}";
 }
+
+Values::Value numberValue(float value, int decimals) {
+  return Values::Value(Values::DoubleValue(number_t(value, decimals)));
+}
+
+Values::Value integerValue(int64_t value) { return Values::Value(Values::IntegerValue(value)); }
+
+Values::Value boolValue(bool value) { return Values::Value(Values::BooleanValue(value)); }
+
+Values::Value textValue(const char* value) { return Values::Value(Values::StringValue(value)); }
+
+Values::Value systemValue(const SystemSnapshot& system) {
+  Values::MapValue map("voltage", numberValue(system.voltage, 2));
+  map.add("current", numberValue(system.current, 2));
+  map.add("power", numberValue(system.power, 1));
+  map.add("soc", numberValue(system.soc, 2));
+  map.add("remainingAh", numberValue(system.remainingAh, 2));
+  map.add("socDelta", numberValue(system.socDelta, 1));
+  return Values::Value(map);
+}
+
+Values::Value bmsValue(const BmsSnapshot& bms) {
+  Values::MapValue map("online", boolValue(bms.online));
+  map.add("soc", integerValue(bms.soc));
+  map.add("voltage", numberValue(bms.voltage, 2));
+  map.add("current", numberValue(bms.current, 2));
+  map.add("power", numberValue(bms.power, 1));
+  map.add("remainingAh", numberValue(bms.remainingAh, 2));
+  map.add("minCellVoltage", numberValue(bms.minCellVoltage, 3));
+  map.add("maxCellVoltage", numberValue(bms.maxCellVoltage, 3));
+  map.add("temperature", numberValue(bms.temperature, 1));
+  map.add("chargeMos", boolValue(bms.chargeMos));
+  map.add("dischargeMos", boolValue(bms.dischargeMos));
+  map.add("protectionFlags", integerValue(bms.protectionFlags));
+  return Values::Value(map);
+}
+
+String isoTimestamp(uint64_t epochMs) {
+  const time_t seconds = static_cast<time_t>(epochMs / 1000ULL);
+  tm utc{};
+  gmtime_r(&seconds, &utc);
+  char text[32];
+  snprintf(text, sizeof(text), "%04d-%02d-%02dT%02d:%02d:%02d.%03uZ", utc.tm_year + 1900,
+           utc.tm_mon + 1, utc.tm_mday, utc.tm_hour, utc.tm_min, utc.tm_sec,
+           static_cast<unsigned>(epochMs % 1000ULL));
+  return String(text);
+}
 }  // namespace
 
 struct FirebaseService::Impl {
-  enum class Operation : uint8_t { None, SessionGet, StatusUpdate, LiveUpdate };
+  enum class Operation : uint8_t { None, SessionGet, StatusUpdate, LiveUpdate, LogWrite };
   enum class HealthState : uint8_t { Starting, Healthy, Degraded, Recovering };
 
   WiFiClientSecure sslClient;
@@ -85,6 +140,7 @@ struct FirebaseService::Impl {
   UserAuth userAuth;
   FirebaseApp app;
   RealtimeDatabase database;
+  Firestore::Documents firestore;
   AsyncResult authResult;
   AsyncResult operationResult;
   Operation operation = Operation::None;
@@ -118,6 +174,10 @@ struct FirebaseService::Impl {
   uint32_t pendingBms1UpdateMs = 0;
   uint32_t pendingBms2UpdateMs = 0;
   uint64_t lastHandledSessionRequest = 0;
+  // Set on every FirebaseService::update(); the queue outlives this object.
+  EventLogMonitor* eventLog = nullptr;
+  uint32_t nextLogWriteMs = 0;
+  uint32_t logWriteFailCount = 0;
   size_t livePayloadSize = 0;
 
   // --- Diagnostics / per-channel health (added in 0.4.2-stability) ---
@@ -151,6 +211,7 @@ struct FirebaseService::Impl {
     initializeApp(asyncClient, app, getAuth(userAuth), authResult);
     app.getApp<RealtimeDatabase>(database);
     database.url(FIREBASE_DATABASE_URL);
+    app.getApp<Firestore::Documents>(firestore);
     initialized = true;
   }
 
@@ -186,6 +247,7 @@ struct FirebaseService::Impl {
       case Operation::SessionGet: return "control-read";
       case Operation::StatusUpdate: return "status-write";
       case Operation::LiveUpdate: return "live-write";
+      case Operation::LogWrite: return "log-write";
       default: return "idle";
     }
   }
@@ -231,10 +293,12 @@ struct FirebaseService::Impl {
       if (operation == Operation::SessionGet) ++controlReadFailCount;
       else if (operation == Operation::StatusUpdate) ++statusWriteFailCount;
       else if (operation == Operation::LiveUpdate) ++liveWriteFailCount;
+      else if (operation == Operation::LogWrite) ++logWriteFailCount;
       Serial.printf("[FIREBASE][ERROR] %s failed after %lu ms: %s (%d) | retry=%u\n",
                     operationName(), static_cast<unsigned long>(now - operationStartedMs),
                     lastErrorMessage.c_str(), lastErrorCode,
                     static_cast<unsigned>(recoveryAttempt));
+      if (operation == Operation::LogWrite) handleLogWriteError(now, lastErrorCode);
       finishOperation();
       return;
     }
@@ -260,6 +324,13 @@ struct FirebaseService::Impl {
       if (NetworkConfig::DEBUG_FIREBASE)
         Serial.printf("[FIREBASE] Live telemetry uploaded | %u bytes\n",
                       static_cast<unsigned>(livePayloadSize));
+    } else if (operation == Operation::LogWrite) {
+      noteSuccess(network, now, false);
+      if (const LogEvent* event = eventLog->peek()) {
+        Serial.printf("[LOG] Uploaded %s (%u left)\n", logEventTypeName(event->type),
+                      static_cast<unsigned>(eventLog->pending() - 1));
+      }
+      eventLog->pop();
     }
     finishOperation();
   }
@@ -280,6 +351,13 @@ struct FirebaseService::Impl {
                     operationName(), static_cast<unsigned long>(now - operationStartedMs), reason);
     } else {
       Serial.printf("[FIREBASE][WARN] Resetting async RTDB queue (%s)\n", reason);
+    }
+    // A timed-out log write counts as a failed attempt too, or its retry
+    // backoff would be skipped and it would keep jumping the queue ahead of
+    // the status heartbeat.
+    if (operationInFlight && operation == Operation::LogWrite) {
+      ++logWriteFailCount;
+      handleLogWriteError(now, 0);
     }
     asyncClient.stopAsync(true);
     operationResult.clear();
@@ -478,7 +556,7 @@ struct FirebaseService::Impl {
         "app=%d auth=%d rtdb=%d ttl=%lus authAge=%lums state=%s scenario=%s op=%s/%d drain=%d "
         "tasks=%u gapMax=%lums controlAge=%lums statusAge=%lums liveAge=%lums heap=%u minHeap=%u "
         "largest=%u remote=%d req=%llu recoveryCount=%u forcedClose=%u errCount=%u "
-        "ctrlFail=%u statusFail=%u liveFail=%u lastErr=\"%s\"(%d)\n",
+        "ctrlFail=%u statusFail=%u liveFail=%u logFail=%u lastErr=\"%s\"(%d)\n",
         static_cast<unsigned long>(now / 1000U), network.wifiConnected,
         network.ip.c_str(), network.wifiRssi, internetReachable, network.timeSynced,
         static_cast<unsigned long long>(epochMs), app.ready(), app.isAuthenticated(),
@@ -491,7 +569,7 @@ struct FirebaseService::Impl {
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), network.remoteSessionActive,
         static_cast<unsigned long long>(network.remoteSessionRequestedAt), totalRecoveryCount,
         forcedSocketCloseCount, firebaseErrorCount, controlReadFailCount, statusWriteFailCount,
-        liveWriteFailCount, lastErrorMessage.c_str(), lastErrorCode);
+        liveWriteFailCount, logWriteFailCount, lastErrorMessage.c_str(), lastErrorCode);
   }
 
   void updateRemoteSessionState(NetworkState& network, uint64_t epochMs, uint32_t now) {
@@ -527,6 +605,67 @@ struct FirebaseService::Impl {
     } else if (wasActive && !active) {
       Serial.println("[REMOTE] Session expired - live telemetry paused");
     }
+  }
+
+  // Document IDs are derived from the event itself, so a retry after a lost
+  // response hits ALREADY_EXISTS (409) instead of writing a duplicate.
+  void handleLogWriteError(uint32_t now, int httpCode) {
+    LogEvent* event = eventLog ? eventLog->peek() : nullptr;
+    if (!event) return;
+    if (httpCode == 409) {
+      Serial.printf("[LOG] %s already stored\n", logEventTypeName(event->type));
+      eventLog->pop();
+      return;
+    }
+    if (event->attempts < 255) ++event->attempts;
+    if (event->attempts >= LogConfig::MAX_WRITE_ATTEMPTS) {
+      Serial.printf("[LOG][ERROR] Giving up on %s after %u attempts\n",
+                    logEventTypeName(event->type), static_cast<unsigned>(event->attempts));
+      eventLog->pop();
+      return;
+    }
+    constexpr size_t last = sizeof(LogConfig::WRITE_RETRY_BACKOFF_MS) /
+                            sizeof(LogConfig::WRITE_RETRY_BACKOFF_MS[0]) - 1;
+    const size_t slot = event->attempts - 1U > last ? last : event->attempts - 1U;
+    nextLogWriteMs = now + LogConfig::WRITE_RETRY_BACKOFF_MS[slot];
+  }
+
+  void startLogWrite(const LogEvent& event, uint32_t now, uint64_t epochMs) {
+    recoveryRetryPending = false;
+    const uint64_t eventEpochMs = epochMs - (now - event.capturedMs);
+    Document<Values::Value> doc("type", textValue(logEventTypeName(event.type)));
+    doc.add("severity", textValue(logSeverityName(event.severity)));
+    doc.add("createdAt", Values::Value(Values::TimestampValue(isoTimestamp(eventEpochMs))));
+    doc.add("bmsIndex", integerValue(event.bmsIndex));
+    doc.add("detail", integerValue(event.detail));
+    doc.add("firmwareVersion", textValue(NetworkConfig::FIRMWARE_VERSION));
+    doc.add("uptimeSeconds", integerValue(event.capturedMs / 1000U));
+    doc.add("system", systemValue(event.system));
+    doc.add("bms1", bmsValue(event.bms[0]));
+    doc.add("bms2", bmsValue(event.bms[1]));
+    if (event.hasBefore) {
+      Values::MapValue before("voltage", numberValue(event.before.voltage, 2));
+      before.add("current", numberValue(event.before.current, 2));
+      before.add("power", numberValue(event.before.power, 1));
+      before.add("soc", numberValue(event.before.soc, 2));
+      before.add("bms1Voltage", numberValue(event.beforeBmsVoltage[0], 2));
+      before.add("bms2Voltage", numberValue(event.beforeBmsVoltage[1], 2));
+      doc.add("before", Values::Value(before));
+    }
+
+    String path = String("devices/") + DEVICE_ID + "/" + LogConfig::COLLECTION + "/";
+    path += String(static_cast<unsigned long>(eventEpochMs / 1000ULL));
+    path += '-';
+    path += logEventTypeName(event.type);
+    path += '-';
+    path += event.bmsIndex;
+
+    operationResult.clear();
+    operation = Operation::LogWrite;
+    operationInFlight = true;
+    operationStartedMs = now;
+    firestore.createDocument(asyncClient, Firestore::Parent(FIREBASE_PROJECT_ID), path,
+                             DocumentMask("type"), doc, operationResult);
   }
 
   void startSessionGet(uint32_t now) {
@@ -612,12 +751,13 @@ void FirebaseService::begin() { impl_->begin(); }
 
 void FirebaseService::update(NetworkState& network, const SystemBatteryData& system,
                              const BmsDeviceState& bms1, const BmsDeviceState& bms2,
-                             uint32_t now, uint64_t epochMs) {
+                             EventLogMonitor& eventLog, uint32_t now, uint64_t epochMs) {
   if (impl_->lastUpdateCallMs != 0) {
     const uint32_t gap = now - impl_->lastUpdateCallMs;
     if (gap > impl_->maxUpdateGapMs) impl_->maxUpdateGapMs = gap;
   }
   impl_->lastUpdateCallMs = now;
+  impl_->eventLog = &eventLog;
   if (network.wifiConnected && !impl_->initialized) impl_->initialize();
   if (!impl_->initialized) return;
 
@@ -656,6 +796,11 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
   if (network.timeSynced &&
       static_cast<int32_t>(now - impl_->nextSessionCheckMs) >= 0) {
     impl_->startSessionGet(now);
+    return;
+  }
+  if (network.timeSynced && eventLog.pending() &&
+      static_cast<int32_t>(now - impl_->nextLogWriteMs) >= 0) {
+    impl_->startLogWrite(*eventLog.peek(), now, epochMs);
     return;
   }
   if (network.timeSynced &&

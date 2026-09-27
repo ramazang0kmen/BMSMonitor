@@ -6,6 +6,7 @@
 #include "config/NetworkConfig.h"
 #include "display/DisplayManager.h"
 #include "models/NetworkState.h"
+#include "monitoring/EventLogMonitor.h"
 #include "network/FirebaseService.h"
 #include "network/TimeService.h"
 #include "network/WiFiManager.h"
@@ -16,6 +17,7 @@ DisplayManager displayManager;
 GatewayWiFiManager wifiManager;
 TimeService timeService;
 FirebaseService firebaseService;
+EventLogMonitor eventLogMonitor;
 NetworkState networkState;
 uint32_t nextLogMs = 0;
 uint32_t nextHeapLogMs = 0;
@@ -87,6 +89,7 @@ void setup() {
   NimBLEDevice::setPower(3);
   const uint32_t now = millis();
   bmsManager.begin(now);
+  eventLogMonitor.recordBoot(static_cast<uint32_t>(esp_reset_reason()), now);
   displayManager.begin();
   wifiManager.begin(now);
   firebaseService.begin();
@@ -98,8 +101,9 @@ void loop() {
   const SystemBatteryData system = bmsManager.systemData(now);
   wifiManager.update(networkState, now);
   timeService.update(networkState);
+  eventLogMonitor.update(system, bmsManager.device(0), bmsManager.device(1), now);
   firebaseService.update(networkState, system, bmsManager.device(0), bmsManager.device(1),
-                         now, timeService.epochMs());
+                         eventLogMonitor, now, timeService.epochMs());
   displayManager.update(system, bmsManager.device(0), bmsManager.device(1), networkState, now);
   printOperatingData(now);
   printHeapData(now);

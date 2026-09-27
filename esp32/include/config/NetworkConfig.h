@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 namespace NetworkConfig {
-constexpr char FIRMWARE_VERSION[] = "0.4.6-stability";
+constexpr char FIRMWARE_VERSION[] = "0.5.0-eventlog";
 constexpr uint32_t STATUS_HEARTBEAT_INTERVAL_MS = 30000;
 constexpr uint32_t REMOTE_SESSION_CHECK_INTERVAL_MS = 2000;
 constexpr uint32_t REMOTE_SESSION_DURATION_MS = 60000;

@@ -35,6 +35,32 @@ refresh. Live telemetry is sent for 60 seconds measured from that server
 timestamp. The request is not renewed periodically, and historical snapshots
 are neither queued nor written to flash.
 
+## Event log (Cloud Firestore)
+
+State changes are written as history to Firestore (database `(default)`,
+`europe-west1`) at `devices/home-battery-01/logs/{epochSeconds}-{type}-{bms}`.
+Set `FIREBASE_PROJECT_ID` in `Secrets.h`. Each entry carries `type`,
+`severity`, `createdAt`, `bmsIndex` (0 = system), `detail`, a `system`
+snapshot (average voltage, SOC, current, power), full `bms1`/`bms2` snapshots
+and, for `discharge_stopped`, a `before` snapshot taken while the load was
+still on.
+
+| type | when |
+| --- | --- |
+| `avg_soc_low` / `bms_soc_low` | average / one pack drops to 20 % (re-arms at 25 %) |
+| `avg_soc_empty` / `bms_soc_empty` | average / one pack reaches 0 % |
+| `avg_soc_full` | average reaches 100 % |
+| `discharge_stopped` / `discharge_started` | draw falls below 0.3 A after ≥1 A, and returns |
+| `bms_discharge_off/on`, `bms_charge_off/on` | BMS opens / closes a MOSFET |
+| `bms_protection` / `_cleared` | JBD protection flags set / cleared |
+| `bms_offline` / `bms_online` | pack unreachable for 60 s / back |
+| `soc_mismatch` | packs differ by ≥10 % for 30 s |
+| `boot` | gateway start, `detail` = ESP reset reason |
+
+Thresholds live in `include/config/LogConfig.h`. Every condition must hold for
+a few seconds, and the same condition logs at most once per 5 minutes. Rules
+are in `firebase/firestore.rules` (create-only, no update/delete).
+
 ## Deploying rules
 
 The rules file can be pasted into the Realtime Database **Rules** editor, or

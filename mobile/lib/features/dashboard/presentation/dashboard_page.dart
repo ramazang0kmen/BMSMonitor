@@ -64,6 +64,11 @@ class _DashboardView extends StatelessWidget {
             ),
           ),
           IconButton(
+            tooltip: 'Olay kayıtları',
+            onPressed: () => context.push('/logs'),
+            icon: const Icon(Icons.history_rounded),
+          ),
+          IconButton(
             tooltip: 'Tanılama ve ayarlar',
             onPressed: () => context.push('/settings'),
             icon: const Icon(Icons.monitor_heart_outlined),

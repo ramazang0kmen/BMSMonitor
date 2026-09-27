@@ -10,6 +10,8 @@ import '../features/auth/presentation/login_page.dart';
 import '../features/bms_detail/presentation/bms_detail_page.dart';
 import '../features/dashboard/data/firebase_bms_repository.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
+import '../features/event_log/data/event_log_repository.dart';
+import '../features/event_log/presentation/event_log_page.dart';
 import '../features/settings/presentation/settings_page.dart';
 
 class AuthStateNotifier extends ChangeNotifier {
@@ -35,6 +37,7 @@ class AuthStateNotifier extends ChangeNotifier {
 GoRouter createRouter({
   required AuthRepository authRepository,
   required FirebaseBmsRepository bmsRepository,
+  required EventLogRepository eventLogRepository,
   required AuthStateNotifier authState,
 }) {
   return GoRouter(
@@ -73,6 +76,11 @@ GoRouter createRouter({
           repository: bmsRepository,
           bmsNumber: int.tryParse(state.pathParameters['number'] ?? '') ?? 1,
         ),
+      ),
+      GoRoute(
+        path: '/logs',
+        builder: (context, state) =>
+            EventLogPage(repository: eventLogRepository),
       ),
       GoRoute(
         path: '/settings',

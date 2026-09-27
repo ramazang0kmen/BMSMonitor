@@ -9,6 +9,11 @@ abstract final class AppConstants {
   static const remoteSessionRequestedAtPath =
       '$deviceRoot/control/remoteSession/requestedAt';
 
+  // Firestore, not RTDB: gateway event log (SOC thresholds, load cuts, BMS
+  // faults) kept as history.
+  static const eventLogCollection = 'devices/$deviceId/logs';
+  static const eventLogPageSize = 200;
+
   static const remoteSessionDuration = Duration(seconds: 60);
   static const gatewayOnlineTimeout = Duration(seconds: 60);
   static const liveThreshold = Duration(seconds: 5);
