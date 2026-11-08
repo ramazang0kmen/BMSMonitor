@@ -9,6 +9,9 @@ struct SystemBatteryData {
   float soc = 0.0f;
   bool bms1Online = false;
   bool bms2Online = false;
+  uint8_t discoveredBmsCount = 0;
+  uint8_t connectedBmsCount = 0;
+  uint8_t onlineBmsCount = 0;
   bool socMismatch = false;
   float socDelta = 0.0f;
 };

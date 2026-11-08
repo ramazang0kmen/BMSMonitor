@@ -87,21 +87,26 @@ void DisplayManager::readCommand(uint8_t command, uint8_t* result, size_t length
   displaySpi_.endTransaction();
 }
 
-void DisplayManager::update(const SystemBatteryData& system, const BmsDeviceState& bms1,
-                            const BmsDeviceState& bms2, const NetworkState& network,
-                            uint32_t now) {
+void DisplayManager::update(const SystemBatteryData& system, const BmsDeviceState* devices,
+                            size_t deviceCount, size_t activeGroupStart,
+                            const NetworkState& network, uint32_t now) {
+  deviceCount_ = deviceCount;
   handleSerial(now);
   handleTouch(now);
   if (!initialized_) return;
-  if (static_cast<int32_t>(now - nextPageMs_) >= 0) selectPage((page_ + 1) % 3, now);
+  const uint8_t pageCount = static_cast<uint8_t>(deviceCount + 1);
+  if (static_cast<int32_t>(now - nextPageMs_) >= 0)
+    selectPage(pageCount ? (page_ + 1) % pageCount : 0, now);
   if (static_cast<int32_t>(now - nextRedrawMs_) < 0) return;
   nextRedrawMs_ = now + DisplayConfig::REDRAW_INTERVAL_MS;
-  if (page_ == 0) dashboard_.render(*display_, system, bms1, bms2, network);
-  else detail_.render(*display_, page_ == 1 ? bms1 : bms2, page_);
+  if (page_ == 0)
+    dashboard_.render(*display_, system, devices, deviceCount, activeGroupStart, network, now);
+  else if (page_ <= deviceCount)
+    detail_.render(*display_, devices[page_ - 1], page_, now);
 }
 
 void DisplayManager::selectPage(uint8_t page, uint32_t now) {
-  page_ = page > 2 ? 0 : page;
+  page_ = page > deviceCount_ ? 0 : page;
   nextPageMs_ = now + DisplayConfig::AUTO_PAGE_INTERVAL_MS;
   nextRedrawMs_ = now;
   if (!initialized_) return;

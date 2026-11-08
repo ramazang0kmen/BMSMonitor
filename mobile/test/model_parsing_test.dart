@@ -61,5 +61,37 @@ void main() {
 
       expect(battery.cells.map((cell) => cell.voltage), [3.2, 3.3, 3.4]);
     });
+
+    test(
+      'dynamic BMS map supports more than three batteries and sorts them',
+      () {
+        final telemetry = LiveTelemetry.fromJson({
+          'timestamp': 2,
+          'bms': {
+            'bms_four': {'order': 3, 'name': 'D', 'soc': 40},
+            'bms_two': {'order': 1, 'name': 'B', 'soc': 20},
+            'bms_one': {'order': 0, 'name': 'A', 'soc': 10},
+            'bms_three': {
+              'order': 2,
+              'name': 'C',
+              'soc': 30,
+              'online': true,
+              'connected': false,
+              'lastSeen': 1234,
+            },
+          },
+        });
+
+        expect(telemetry.batteries, hasLength(4));
+        expect(telemetry.batteries.map((battery) => battery.id), [
+          'bms_one',
+          'bms_two',
+          'bms_three',
+          'bms_four',
+        ]);
+        expect(telemetry.batteries[2].connected, isFalse);
+        expect(telemetry.batteries[2].lastSeen, 1234);
+      },
+    );
   });
 }

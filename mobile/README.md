@@ -1,6 +1,6 @@
 # BMS Monitor
 
-ESP32 BMS gateway'in Firebase Realtime Database telemetrisini Android ve iOS'ta canlı izleyen Flutter uygulamasıdır. Firebase Email/Password Authentication, Material 3, sistem dark mode, `go_router` ve `flutter_bloc` kullanır.
+ESP32 BMS gateway'in Firebase Realtime Database telemetrisini Android ve iOS'ta canlı izleyen Flutter uygulamasıdır. Firebase'deki dinamik `live/bms/{bmsId}` listesindeki tüm BMS'leri gösterir; sırayla taranan gruplarda son veri ve bağlantı sırası durumu korunur. Firebase Email/Password Authentication, Material 3, sistem dark mode, `go_router` ve `flutter_bloc` kullanır.
 
 ## Yapılandırma
 
@@ -30,9 +30,11 @@ flutter analyze
 flutter test
 flutter run
 flutter build apk --debug
+flutter build apk --release
 ```
 
 Debug APK çıktısı `build/app/outputs/flutter-apk/app-debug.apk` yolundadır.
+Release APK çıktısı `build/app/outputs/flutter-apk/app-release.apk` yolundadır.
 
 ## Canlı veri ve lifecycle
 

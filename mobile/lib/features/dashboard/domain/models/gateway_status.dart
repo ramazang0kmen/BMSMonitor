@@ -14,6 +14,9 @@ class GatewayStatus extends Equatable {
     required this.minFreeHeap,
     required this.bms1Online,
     required this.bms2Online,
+    required this.discoveredBmsCount,
+    required this.connectedBmsCount,
+    required this.onlineBmsCount,
   });
 
   factory GatewayStatus.fromJson(Object? value) {
@@ -29,6 +32,20 @@ class GatewayStatus extends Equatable {
       minFreeHeap: asInt(json['minFreeHeap']),
       bms1Online: asBool(json['bms1Online']),
       bms2Online: asBool(json['bms2Online']),
+      discoveredBmsCount: asInt(
+        json['discoveredBmsCount'],
+        asBool(json['bms2Online']) ? 2 : (asBool(json['bms1Online']) ? 1 : 0),
+      ),
+      connectedBmsCount: asInt(
+        json['connectedBmsCount'],
+        (asBool(json['bms1Online']) ? 1 : 0) +
+            (asBool(json['bms2Online']) ? 1 : 0),
+      ),
+      onlineBmsCount: asInt(
+        json['onlineBmsCount'],
+        (asBool(json['bms1Online']) ? 1 : 0) +
+            (asBool(json['bms2Online']) ? 1 : 0),
+      ),
     );
   }
 
@@ -43,6 +60,9 @@ class GatewayStatus extends Equatable {
     minFreeHeap: 0,
     bms1Online: false,
     bms2Online: false,
+    discoveredBmsCount: 0,
+    connectedBmsCount: 0,
+    onlineBmsCount: 0,
   );
 
   final bool online;
@@ -55,6 +75,9 @@ class GatewayStatus extends Equatable {
   final int minFreeHeap;
   final bool bms1Online;
   final bool bms2Online;
+  final int discoveredBmsCount;
+  final int connectedBmsCount;
+  final int onlineBmsCount;
 
   @override
   List<Object?> get props => [
@@ -68,5 +91,8 @@ class GatewayStatus extends Equatable {
     minFreeHeap,
     bms1Online,
     bms2Online,
+    discoveredBmsCount,
+    connectedBmsCount,
+    onlineBmsCount,
   ];
 }

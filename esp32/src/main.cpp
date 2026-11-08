@@ -25,7 +25,7 @@ uint32_t nextHeapLogMs = 0;
 void printOperatingData(uint32_t now) {
   if (static_cast<int32_t>(now - nextLogMs) < 0) return;
   nextLogMs = now + 2000U;
-  for (size_t i = 0; i < 2; ++i) {
+  for (size_t i = 0; i < bmsManager.deviceCount(); ++i) {
     const BmsDeviceState& state = bmsManager.device(i);
     if (!state.connected || state.lastUpdateMs == 0) {
       Serial.printf("[BMS%u] OFFLINE | errors %lu\n", static_cast<unsigned>(i + 1),
@@ -102,9 +102,10 @@ void loop() {
   wifiManager.update(networkState, now);
   timeService.update(networkState);
   eventLogMonitor.update(system, bmsManager.device(0), bmsManager.device(1), now);
-  firebaseService.update(networkState, system, bmsManager.device(0), bmsManager.device(1),
-                         eventLogMonitor, now, timeService.epochMs());
-  displayManager.update(system, bmsManager.device(0), bmsManager.device(1), networkState, now);
+  firebaseService.update(networkState, system, bmsManager.devices(), bmsManager.deviceCount(),
+                         bmsManager.dataRevision(), eventLogMonitor, now, timeService.epochMs());
+  displayManager.update(system, bmsManager.devices(), bmsManager.deviceCount(),
+                        bmsManager.activeGroupStart(), networkState, now);
   printOperatingData(now);
   printHeapData(now);
   delay(1);

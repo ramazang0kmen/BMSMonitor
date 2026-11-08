@@ -9,12 +9,15 @@ class JbdBmsClient : public NimBLEClientCallbacks {
  public:
   JbdBmsClient() = default;
   ~JbdBmsClient();
-  void begin(BmsDeviceState& device);
+  bool attach(BmsDeviceState& device);
+  void release();
   bool startConnect(uint32_t now);
   void update(uint32_t now);
   void disconnect();
   bool consumeFailureEvent();
   bool isDisconnected() const;
+  bool isConnecting() const;
+  bool hasDevice() const { return device_ != nullptr; }
 
  private:
   enum class Stage : uint8_t { Disconnected, Connecting, Discovering, Settling, Ready, AwaitBasic, AwaitCells };
@@ -44,5 +47,6 @@ class JbdBmsClient : public NimBLEClientCallbacks {
   bool basicReceived_ = false;
   bool cellsReceived_ = false;
   bool failureEvent_ = false;
+  bool intentionalDisconnect_ = false;
   uint8_t consecutiveResponseFailures_ = 0;
 };

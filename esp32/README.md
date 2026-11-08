@@ -1,15 +1,17 @@
 # ESP32 BMS Gateway — local dashboard
 
-This firmware keeps persistent BLE links to the two configured JBD BMS units, polls Basic Info
+This firmware discovers up to 12 JBD-compatible BMS units, polls Basic Info
 (`0x03`) and Cell Info (`0x04`), calculates the combined parallel-battery state, and renders a
-240x320 portrait dashboard plus two detail pages. It also maintains Wi-Fi, Firebase Authentication,
+240x320 portrait dashboard plus one detail page per device. Up to three BMS links remain active;
+when more are found, the firmware rotates through groups of three while retaining fresh readings.
+It also maintains Wi-Fi, Firebase Authentication,
 an authenticated RTDB status heartbeat, and session-gated live telemetry without blocking local
 monitoring.
 
 The E32R28T-1 display configuration uses the documented ST7789P3 wiring. Its XPT2046 controller
 is initialized, but button hit-testing remains disabled until the installed panel is physically
-calibrated. Pages auto-rotate every 10 seconds; Serial keys `0`, `1`, and `2` select dashboard,
-BMS 1 detail, and BMS 2 detail.
+calibrated. Pages auto-rotate every 10 seconds; Serial key `0` selects the dashboard and keys
+`1`–`9` select the corresponding BMS detail page.
 
 The dashboard indicators are `W` (Wi-Fi), `C` (cloud/RTDB), and `R` (remote
 session). `W` and `C` are green when ready. `R` is green during the 60-second

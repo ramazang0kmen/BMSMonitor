@@ -14,7 +14,7 @@ class FirebaseService {
   ~FirebaseService();
   void begin();
   void update(NetworkState& network, const SystemBatteryData& system,
-              const BmsDeviceState& bms1, const BmsDeviceState& bms2,
+              const BmsDeviceState* devices, size_t deviceCount, uint32_t dataRevision,
               EventLogMonitor& eventLog, uint32_t now, uint64_t epochMs);
   size_t lastLivePayloadSize() const;
 

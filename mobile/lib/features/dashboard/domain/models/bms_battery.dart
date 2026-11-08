@@ -7,7 +7,11 @@ import 'cell_voltage.dart';
 
 class BmsBattery extends Equatable {
   const BmsBattery({
+    required this.id,
+    required this.order,
     required this.online,
+    required this.connected,
+    required this.lastSeen,
     required this.name,
     required this.rssi,
     required this.voltage,
@@ -27,7 +31,7 @@ class BmsBattery extends Equatable {
     required this.cells,
   });
 
-  factory BmsBattery.fromJson(Object? value) {
+  factory BmsBattery.fromJson(Object? value, {String? id, int? order}) {
     final json = asStringMap(value);
     final rawCells = asObjectList(
       json['cells'],
@@ -51,7 +55,11 @@ class BmsBattery extends Equatable {
         ),
     ];
     return BmsBattery(
+      id: id ?? asText(json['id'], ''),
+      order: order ?? asInt(json['order']),
       online: asBool(json['online']),
+      connected: asBool(json['connected'], asBool(json['online'])),
+      lastSeen: asInt(json['lastSeen']),
       name: asText(json['name'], 'BMS'),
       rssi: asInt(json['rssi']),
       voltage: asDouble(json['voltage']),
@@ -77,7 +85,11 @@ class BmsBattery extends Equatable {
   }
 
   static const empty = BmsBattery(
+    id: '',
+    order: 0,
     online: false,
+    connected: false,
+    lastSeen: 0,
     name: 'BMS',
     rssi: 0,
     voltage: 0,
@@ -97,7 +109,11 @@ class BmsBattery extends Equatable {
     cells: [],
   );
 
+  final String id;
+  final int order;
   final bool online;
+  final bool connected;
+  final int lastSeen;
   final String name;
   final int rssi;
   final double voltage;
@@ -118,7 +134,11 @@ class BmsBattery extends Equatable {
 
   @override
   List<Object?> get props => [
+    id,
+    order,
     online,
+    connected,
+    lastSeen,
     name,
     rssi,
     voltage,

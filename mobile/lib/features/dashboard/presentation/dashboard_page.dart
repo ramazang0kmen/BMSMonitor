@@ -134,24 +134,32 @@ class _DashboardView extends StatelessWidget {
                   const SizedBox(height: 14),
                   _SocMismatchCard(
                     system: telemetry.system,
-                    bms1: telemetry.bms1,
-                    bms2: telemetry.bms2,
+                    batteries: telemetry.batteries,
                   ),
                 ],
-                const SizedBox(height: 14),
-                _BmsSummaryCard(
-                  number: 1,
-                  battery: telemetry.bms1,
-                  gatewayOnline: gatewayOnline,
-                  onTap: () => context.push('/bms/1'),
-                ),
-                const SizedBox(height: 12),
-                _BmsSummaryCard(
-                  number: 2,
-                  battery: telemetry.bms2,
-                  gatewayOnline: gatewayOnline,
-                  onTap: () => context.push('/bms/2'),
-                ),
+                if (telemetry.batteries.isEmpty)
+                  const _MessageBanner(
+                    icon: Icons.bluetooth_searching_rounded,
+                    title: 'BMS bulunamadı',
+                    message:
+                        'Gateway Bluetooth taramasının tamamlanması bekleniyor.',
+                  )
+                else
+                  for (
+                    var index = 0;
+                    index < telemetry.batteries.length;
+                    index++
+                  ) ...[
+                    const SizedBox(height: 12),
+                    _BmsSummaryCard(
+                      number: index + 1,
+                      battery: telemetry.batteries[index],
+                      gatewayOnline: gatewayOnline,
+                      now: now,
+                      onTap: () =>
+                          context.push('/bms/${telemetry.batteries[index].id}'),
+                    ),
+                  ],
               ],
             ],
           );
@@ -308,19 +316,22 @@ class _SystemBatteryCard extends StatelessWidget {
 }
 
 class _SocMismatchCard extends StatelessWidget {
-  const _SocMismatchCard({
-    required this.system,
-    required this.bms1,
-    required this.bms2,
-  });
+  const _SocMismatchCard({required this.system, required this.batteries});
 
   final SystemBattery system;
-  final BmsBattery bms1;
-  final BmsBattery bms2;
+  final List<BmsBattery> batteries;
 
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.tertiary;
+    final onlineBatteries =
+        batteries.where((battery) => battery.online).toList()
+          ..sort((a, b) => a.soc.compareTo(b.soc));
+    final range = onlineBatteries.length < 2
+        ? 'Fark: %${system.socDelta.toStringAsFixed(0)}'
+        : '${onlineBatteries.first.name}: %${onlineBatteries.first.soc.toStringAsFixed(0)} · '
+              '${onlineBatteries.last.name}: %${onlineBatteries.last.soc.toStringAsFixed(0)} · '
+              'Fark: %${system.socDelta.toStringAsFixed(0)}';
     return Card(
       color: color.withValues(alpha: 0.09),
       child: Padding(
@@ -341,11 +352,7 @@ class _SocMismatchCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 5),
-                  Text(
-                    'BMS 1: %${bms1.soc.toStringAsFixed(0)} · '
-                    'BMS 2: %${bms2.soc.toStringAsFixed(0)} · '
-                    'Fark: %${system.socDelta.toStringAsFixed(0)}',
-                  ),
+                  Text(range),
                   const SizedBox(height: 5),
                   const Text('Paketlerin SOC kalibrasyonunu kontrol edin.'),
                 ],
@@ -363,17 +370,21 @@ class _BmsSummaryCard extends StatelessWidget {
     required this.number,
     required this.battery,
     required this.gatewayOnline,
+    required this.now,
     required this.onTap,
   });
 
   final int number;
   final BmsBattery battery;
   final bool gatewayOnline;
+  final DateTime now;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final online = gatewayOnline && battery.online;
+    final waitingForTurn =
+        gatewayOnline && battery.online && !battery.connected;
     final colors = Theme.of(context).colorScheme;
     return Opacity(
       opacity: online ? 1 : 0.58,
@@ -401,8 +412,16 @@ class _BmsSummaryCard extends StatelessWidget {
                       ),
                     ),
                     StatusBadge(
-                      label: online ? 'ONLINE' : 'OFFLINE · SON VERİ',
-                      color: online ? colors.primary : colors.error,
+                      label: waitingForTurn
+                          ? 'SIRASINI BEKLİYOR'
+                          : online
+                          ? 'ONLINE'
+                          : 'OFFLINE · SON VERİ',
+                      color: waitingForTurn
+                          ? colors.tertiary
+                          : online
+                          ? colors.primary
+                          : colors.error,
                     ),
                     const SizedBox(width: 6),
                     const Icon(Icons.chevron_right),
@@ -432,6 +451,16 @@ class _BmsSummaryCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (battery.lastSeen > 0) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Son veri: ${relativeTime(battery.lastSeen, now)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 Row(
                   children: [

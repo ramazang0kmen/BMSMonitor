@@ -86,16 +86,16 @@ class SettingsPage extends StatelessWidget {
                           value: _formatBytes(status?.minFreeHeap ?? 0),
                         ),
                         _DiagnosticRow(
-                          label: 'BMS 1',
-                          value: status?.bms1Online == true
-                              ? 'Online'
-                              : 'Offline',
+                          label: 'Bulunan BMS',
+                          value: '${status?.discoveredBmsCount ?? 0}',
                         ),
                         _DiagnosticRow(
-                          label: 'BMS 2',
-                          value: status?.bms2Online == true
-                              ? 'Online'
-                              : 'Offline',
+                          label: 'Bağlı BMS',
+                          value: '${status?.connectedBmsCount ?? 0}',
+                        ),
+                        _DiagnosticRow(
+                          label: 'Güncel verili BMS',
+                          value: '${status?.onlineBmsCount ?? 0}',
                         ),
                       ],
                     ],

@@ -16,6 +16,7 @@ class GatewayWiFiManager {
   bool connecting_ = false;
   bool wasConnected_ = false;
   uint8_t reconnectAttempt_ = 0;
+  uint8_t networkIndex_ = 0;
   uint32_t attemptStartedMs_ = 0;
   uint32_t nextReconnectMs_ = 0;
 };

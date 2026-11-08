@@ -1,12 +1,13 @@
 # ESP32 BMS Gateway & Flutter Monitor
 
-An open-source battery monitoring system that reads two JBD/Jiabaida-compatible Bluetooth BMS devices through an ESP32, displays their data on a local TFT dashboard, and publishes remote live telemetry to a Flutter mobile application through Firebase Realtime Database.
+An open-source battery monitoring system that discovers JBD/Jiabaida-compatible Bluetooth BMS devices through an ESP32, displays their data on a local TFT dashboard, and publishes remote live telemetry to a Flutter mobile application through Firebase Realtime Database.
 
 ## Features
 
 ### ESP32 Gateway
 
-- Connects to two JBD/Jiabaida-compatible BMS devices over BLE
+- Discovers and tracks up to 12 JBD/Jiabaida-compatible BMS devices over BLE
+- Keeps up to three links active; larger fleets rotate automatically in groups of three
 - Reads pack voltage, current, SOC, remaining capacity, and temperatures
 - Reads individual cell voltages
 - Calculates minimum/maximum cell voltage and cell delta
@@ -23,7 +24,7 @@ An open-source battery monitoring system that reads two JBD/Jiabaida-compatible 
 - Real-time system battery dashboard
 - Gateway online/offline detection based on timestamp freshness
 - Live, delayed, stale, and offline telemetry states
-- Separate BMS detail screens
+- Dynamic BMS list and separate detail screens for every discovered battery
 - Individual cell voltage visualization
 - SOC mismatch warnings
 - BMS temperature, MOS, balancing, protection, and RSSI monitoring
@@ -34,7 +35,7 @@ An open-source battery monitoring system that reads two JBD/Jiabaida-compatible 
 
 ```text
 ┌──────────────┐                         ┌──────────────┐
-│ JBD BMS #1   │                         │ JBD BMS #2   │
+│ JBD BMS #1…3 │                         │ JBD BMS #4…N │
 └──────┬───────┘                         └──────┬───────┘
        │ BLE                                    │ BLE
        └────────────────┐      ┌────────────────┘
@@ -84,7 +85,7 @@ Touch IRQ  = GPIO36
 
 ## JBD BLE Protocol
 
-The firmware uses the following services and registers commonly exposed by JBD/Jiabaida-compatible BMS devices:
+The firmware uses the following services and registers commonly exposed by JBD/Jiabaida-compatible BMS devices. Three or fewer devices remain connected concurrently; four or more are polled in rotating groups of three and their last fresh readings remain visible in Firebase and the mobile app.
 
 ```text
 Service:     FF00
@@ -208,6 +209,18 @@ The ESP32 device account must not be used for mobile login. Create a separate Fi
 
 ```json
 {
+  "bms": {
+    "bms_a5c23a20e51f": {
+      "id": "bms_a5c23a20e51f",
+      "order": 0,
+      "name": "PPD26C0259",
+      "online": true,
+      "connected": true,
+      "lastSeen": 1787944736309,
+      "voltage": 26.31,
+      "soc": 37.0
+    }
+  },
   "system": {
     "voltage": 26.31,
     "current": 0.0,

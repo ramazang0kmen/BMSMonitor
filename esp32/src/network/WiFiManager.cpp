@@ -6,6 +6,22 @@
 #include "config/Secrets.h"
 
 namespace {
+struct WiFiCredential {
+  const char* ssid;
+  const char* password;
+};
+
+#if defined(WIFI_PRIMARY_SSID) && defined(WIFI_PRIMARY_PASSWORD)
+constexpr WiFiCredential NETWORKS[] = {
+    {WIFI_PRIMARY_SSID, WIFI_PRIMARY_PASSWORD},
+    {WIFI_SSID, WIFI_PASSWORD},
+};
+#else
+constexpr WiFiCredential NETWORKS[] = {{WIFI_SSID, WIFI_PASSWORD}};
+#endif
+
+constexpr uint8_t NETWORK_COUNT = sizeof(NETWORKS) / sizeof(NETWORKS[0]);
+
 void logWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
@@ -57,14 +73,18 @@ void GatewayWiFiManager::update(NetworkState& state, uint32_t now) {
   }
   if (connecting_ && now - attemptStartedMs_ >= 12000U) {
     connecting_ = false;
+    networkIndex_ = (networkIndex_ + 1U) % NETWORK_COUNT;
     scheduleReconnect(now);
   }
   if (!connecting_ && static_cast<int32_t>(now - nextReconnectMs_) >= 0) startConnection(now);
 }
 
 void GatewayWiFiManager::startConnection(uint32_t now) {
-  Serial.printf("[WIFI] Connecting to %s\n", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  const WiFiCredential& network = NETWORKS[networkIndex_];
+  Serial.printf("[WIFI] Connecting to %s (%u/%u)\n", network.ssid,
+                static_cast<unsigned>(networkIndex_ + 1U),
+                static_cast<unsigned>(NETWORK_COUNT));
+  WiFi.begin(network.ssid, network.password);
   connecting_ = true;
   attemptStartedMs_ = now;
 }

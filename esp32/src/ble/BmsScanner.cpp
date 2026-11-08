@@ -86,7 +86,7 @@ bool BmsScanner::looksLikeJbd(const NimBLEAdvertisedDevice& device) {
   std::string name = device.haveName() ? device.getName() : "";
   std::transform(name.begin(), name.end(), name.begin(),
                  [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-  const char* traces[] = {"JBD", "BMS", "XIAOXIANG", "JIABAIDA", "SP", "BT05", "LH-"};
+  const char* traces[] = {"JBD", "BMS", "XIAOXIANG", "JIABAIDA", "PPD", "SP", "BT05", "LH-"};
   for (const char* trace : traces) {
     if (name.find(trace) != std::string::npos) return true;
   }

@@ -71,10 +71,10 @@ GoRouter createRouter({
         builder: (context, state) => DashboardPage(repository: bmsRepository),
       ),
       GoRoute(
-        path: '/bms/:number',
+        path: '/bms/:id',
         builder: (context, state) => BmsDetailPage(
           repository: bmsRepository,
-          bmsNumber: int.tryParse(state.pathParameters['number'] ?? '') ?? 1,
+          bmsId: state.pathParameters['id'] ?? '',
         ),
       ),
       GoRoute(

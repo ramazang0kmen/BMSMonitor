@@ -31,17 +31,30 @@ uint32_t laterOf(uint32_t a, uint32_t b) {
 }
 
 bool isBmsOnline(const BmsDeviceState& state, uint32_t now) {
-  return state.connected && state.lastUpdateMs != 0 &&
-         now - state.lastUpdateMs <= BmsConfig::DATA_STALE_MS;
+  return state.hasFreshData(now);
 }
 
-void appendBmsJson(String& json, const BmsDeviceState& state, bool online) {
+void appendBmsJson(String& json, const BmsDeviceState& state, bool online,
+                   uint32_t now, uint64_t epochMs) {
   const BatteryData& data = state.data;
   json += "{\"online\":";
   json += online ? "true" : "false";
+  json += ",\"connected\":";
+  json += state.connected ? "true" : "false";
+  json += ",\"id\":\"";
+  json += state.id;
+  json += "\",\"order\":";
+  json += state.order;
   json += ",\"name\":\"";
   json += state.name;
-  json += "\",\"rssi\":";
+  json += "\",\"lastSeen\":";
+  const uint64_t lastSeen = state.lastUpdateMs == 0 || now < state.lastUpdateMs
+                                ? 0 : epochMs - (now - state.lastUpdateMs);
+  char lastSeenText[24];
+  snprintf(lastSeenText, sizeof(lastSeenText), "%llu",
+           static_cast<unsigned long long>(lastSeen));
+  json += lastSeenText;
+  json += ",\"rssi\":";
   json += state.rssi;
   json += ",\"voltage\":";
   json += String(data.voltage, 2);
@@ -169,10 +182,8 @@ struct FirebaseService::Impl {
   uint32_t nextStatusMs = 0;
   uint32_t lastTelemetryAttemptMs = 0;
   uint32_t remoteSessionActivatedMs = 0;
-  uint32_t uploadedBms1UpdateMs = 0;
-  uint32_t uploadedBms2UpdateMs = 0;
-  uint32_t pendingBms1UpdateMs = 0;
-  uint32_t pendingBms2UpdateMs = 0;
+  uint32_t uploadedDataRevision = 0;
+  uint32_t pendingDataRevision = 0;
   uint64_t lastHandledSessionRequest = 0;
   // Set on every FirebaseService::update(); the queue outlives this object.
   EventLogMonitor* eventLog = nullptr;
@@ -319,8 +330,7 @@ struct FirebaseService::Impl {
       network.lastTelemetryUpload = epochMs;
       network.lastLiveWriteSuccessMs = now;
       noteSuccess(network, now, false);
-      uploadedBms1UpdateMs = pendingBms1UpdateMs;
-      uploadedBms2UpdateMs = pendingBms2UpdateMs;
+      uploadedDataRevision = pendingDataRevision;
       if (NetworkConfig::DEBUG_FIREBASE)
         Serial.printf("[FIREBASE] Live telemetry uploaded | %u bytes\n",
                       static_cast<unsigned>(livePayloadSize));
@@ -703,6 +713,12 @@ struct FirebaseService::Impl {
     json += system.bms1Online ? "true" : "false";
     json += ",\"bms2Online\":";
     json += system.bms2Online ? "true" : "false";
+    json += ",\"discoveredBmsCount\":";
+    json += system.discoveredBmsCount;
+    json += ",\"connectedBmsCount\":";
+    json += system.connectedBmsCount;
+    json += ",\"onlineBmsCount\":";
+    json += system.onlineBmsCount;
     json += '}';
     operationResult.clear();
     operation = Operation::StatusUpdate;
@@ -712,10 +728,11 @@ struct FirebaseService::Impl {
                               object_t(json.c_str()), operationResult);
   }
 
-  void startLiveUpdate(const SystemBatteryData& system, const BmsDeviceState& bms1,
-                       const BmsDeviceState& bms2, uint32_t now) {
+  void startLiveUpdate(const SystemBatteryData& system, const BmsDeviceState* devices,
+                       size_t deviceCount, uint32_t dataRevision,
+                       uint32_t now, uint64_t epochMs) {
     String json;
-    json.reserve(1500);
+    json.reserve(700 + deviceCount * 850);
     json = "{\"timestamp\":{\".sv\":\"timestamp\"},\"system\":{";
     json += "\"voltage\":" + String(system.voltage, 2);
     json += ",\"current\":" + String(system.current, 2);
@@ -726,14 +743,18 @@ struct FirebaseService::Impl {
     json += ",\"socMismatch\":";
     json += system.socMismatch ? "true" : "false";
     json += ",\"socDelta\":" + String(system.socDelta, 1);
-    json += "},\"bms1\":";
-    appendBmsJson(json, bms1, isBmsOnline(bms1, now));
-    json += ",\"bms2\":";
-    appendBmsJson(json, bms2, isBmsOnline(bms2, now));
+    json += "},\"bms\":{";
+    for (size_t i = 0; i < deviceCount; ++i) {
+      if (i) json += ',';
+      json += '\"';
+      json += devices[i].id;
+      json += "\":";
+      appendBmsJson(json, devices[i], isBmsOnline(devices[i], now), now, epochMs);
+    }
+    json += '}';
     json += '}';
     livePayloadSize = json.length();
-    pendingBms1UpdateMs = bms1.lastUpdateMs;
-    pendingBms2UpdateMs = bms2.lastUpdateMs;
+    pendingDataRevision = dataRevision;
     lastTelemetryAttemptMs = now;
     recoveryRetryPending = false;
     operationResult.clear();
@@ -750,7 +771,8 @@ FirebaseService::~FirebaseService() { delete impl_; }
 void FirebaseService::begin() { impl_->begin(); }
 
 void FirebaseService::update(NetworkState& network, const SystemBatteryData& system,
-                             const BmsDeviceState& bms1, const BmsDeviceState& bms2,
+                             const BmsDeviceState* devices, size_t deviceCount,
+                             uint32_t dataRevision,
                              EventLogMonitor& eventLog, uint32_t now, uint64_t epochMs) {
   if (impl_->lastUpdateCallMs != 0) {
     const uint32_t gap = now - impl_->lastUpdateCallMs;
@@ -808,11 +830,10 @@ void FirebaseService::update(NetworkState& network, const SystemBatteryData& sys
     impl_->startStatusUpdate(network, system, now);
     return;
   }
-  const bool freshSnapshot = bms1.lastUpdateMs != impl_->uploadedBms1UpdateMs ||
-                             bms2.lastUpdateMs != impl_->uploadedBms2UpdateMs;
+  const bool freshSnapshot = dataRevision != impl_->uploadedDataRevision;
   if (network.remoteSessionActive && freshSnapshot &&
       now - impl_->lastTelemetryAttemptMs >= NetworkConfig::TELEMETRY_INTERVAL_MS) {
-    impl_->startLiveUpdate(system, bms1, bms2, now);
+    impl_->startLiveUpdate(system, devices, deviceCount, dataRevision, now, epochMs);
   }
 }
 

@@ -14,8 +14,9 @@ class DisplayManager {
  public:
   DisplayManager();
   bool begin();
-  void update(const SystemBatteryData& system, const BmsDeviceState& bms1,
-              const BmsDeviceState& bms2, const NetworkState& network, uint32_t now);
+  void update(const SystemBatteryData& system, const BmsDeviceState* devices,
+              size_t deviceCount, size_t activeGroupStart,
+              const NetworkState& network, uint32_t now);
 
  private:
   enum class Controller : uint8_t { Unknown, Ili9341, St7789 };
@@ -39,4 +40,5 @@ class DisplayManager {
   uint32_t nextRedrawMs_ = 0;
   uint32_t nextPageMs_ = 0;
   uint32_t nextTouchLogMs_ = 0;
+  size_t deviceCount_ = 0;
 };

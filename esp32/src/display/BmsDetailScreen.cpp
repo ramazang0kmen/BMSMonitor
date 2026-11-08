@@ -2,36 +2,81 @@
 
 #include "config/DisplayConfig.h"
 
-void BmsDetailScreen::begin(Adafruit_GFX& d, uint8_t number) {
-  d.fillScreen(DisplayConfig::BLACK);
-  d.setTextSize(2); d.setTextColor(DisplayConfig::CYAN); d.setCursor(8, 5); d.printf("BMS %u DETAIL", number);
-  d.drawFastHLine(4, 25, 232, DisplayConfig::DARK_GREY);
+void BmsDetailScreen::resetCaches() {
+  for (auto& field : fields_) field.reset();
 }
 
-void BmsDetailScreen::render(Adafruit_GFX& d, const BmsDeviceState& s, uint8_t number) {
-  d.fillRect(0, 30, 240, 288, DisplayConfig::BLACK);
-  d.setTextColor(s.connected ? DisplayConfig::GREEN : DisplayConfig::RED); d.setTextSize(2); d.setCursor(8, 32);
-  d.printf("%%%u  %s", s.data.soc, s.connected ? "ONLINE" : "OFFLINE");
-  d.setTextColor(DisplayConfig::WHITE); d.setCursor(8, 54); d.printf("%.2fV %.2fA", s.data.voltage, s.data.current);
-  d.setTextSize(1); d.setCursor(8, 76); d.printf("Power %.1fW  %.2f/%.1fAh", s.data.power,
-      s.data.remainingCapacityAh, s.data.nominalCapacityAh);
-  const uint8_t cells = s.data.cellCount > 8 ? 8 : s.data.cellCount;
-  for (uint8_t i = 0; i < cells; ++i) {
+void BmsDetailScreen::begin(Adafruit_GFX& display, uint8_t number) {
+  resetCaches();
+  display.fillScreen(DisplayConfig::BLACK);
+  display.setTextSize(2);
+  display.setTextColor(DisplayConfig::CYAN, DisplayConfig::BLACK);
+  display.setCursor(8, 5);
+  display.printf("BMS %u DETAIL", number);
+  display.drawFastHLine(4, 25, 232, DisplayConfig::DARK_GREY);
+}
+
+void BmsDetailScreen::render(Adafruit_GFX& display, const BmsDeviceState& state,
+                             uint8_t number, uint32_t now) {
+  (void)number;
+  char text[64];
+  const bool online = state.hasFreshData(now);
+
+  snprintf(text, sizeof(text), "%%%u  %s", state.data.soc,
+           online ? (state.connected ? "ONLINE" : "BEKLEME") : "OFFLINE");
+  drawChangedText(display, fields_[0], text, 8, 32, 2,
+                  online ? (state.connected ? DisplayConfig::GREEN : DisplayConfig::YELLOW)
+                         : DisplayConfig::RED,
+                  18);
+
+  snprintf(text, sizeof(text), "%.2fV %.2fA", state.data.voltage, state.data.current);
+  drawChangedText(display, fields_[1], text, 8, 54, 2, DisplayConfig::WHITE, 18);
+  snprintf(text, sizeof(text), "Power %.1fW  %.2f/%.1fAh", state.data.power,
+           state.data.remainingCapacityAh, state.data.nominalCapacityAh);
+  drawChangedText(display, fields_[2], text, 8, 76, 1, DisplayConfig::WHITE, 36);
+
+  const uint8_t cellCount = state.data.cellCount > 8 ? 8 : state.data.cellCount;
+  for (uint8_t i = 0; i < 8; ++i) {
     const int16_t y = 96 + i * 16;
-    d.setCursor(12, y); d.setTextSize(1);
-    const bool isMin = s.data.cellVoltages[i] == s.data.minCellVoltage;
-    const bool isMax = s.data.cellVoltages[i] == s.data.maxCellVoltage;
-    d.setTextColor(isMin ? DisplayConfig::YELLOW : (isMax ? DisplayConfig::CYAN : DisplayConfig::WHITE));
-    d.printf("C%u  %.3f V %s", i + 1, s.data.cellVoltages[i], isMin ? "<" : (isMax ? ">" : ""));
+    if (i >= cellCount) {
+      drawChangedText(display, fields_[3 + i], "", 12, y, 1,
+                      DisplayConfig::WHITE, 17);
+      continue;
+    }
+    const bool isMin = state.data.cellVoltages[i] == state.data.minCellVoltage;
+    const bool isMax = state.data.cellVoltages[i] == state.data.maxCellVoltage;
+    snprintf(text, sizeof(text), "C%u  %.3f V %s", i + 1, state.data.cellVoltages[i],
+             isMin ? "<" : (isMax ? ">" : ""));
+    drawChangedText(display, fields_[3 + i], text, 12, y, 1,
+                    isMin ? DisplayConfig::YELLOW
+                          : (isMax ? DisplayConfig::CYAN : DisplayConfig::WHITE),
+                    17);
   }
-  d.setTextColor(DisplayConfig::WHITE); d.setCursor(120, 96); d.printf("MIN %.3f", s.data.minCellVoltage);
-  d.setCursor(120, 112); d.printf("MAX %.3f", s.data.maxCellVoltage);
-  d.setCursor(120, 128); d.printf("D %.0fmV", s.data.cellDelta * 1000.0f);
-  d.setCursor(120, 152); d.printf("RSSI %d", s.rssi);
-  d.setCursor(120, 168); d.printf("ERR %lu", static_cast<unsigned long>(s.errorCount));
-  d.setCursor(8, 232); d.print("TEMP ");
-  for (uint8_t i = 0; i < s.data.temperatureCount && i < 3; ++i) d.printf("%.1f%s", s.data.temperatures[i], i + 1 < s.data.temperatureCount && i < 2 ? "/" : "C");
-  d.setCursor(8, 252); d.printf("CHG %s  DSG %s", s.data.chargeMos ? "ON" : "OFF", s.data.dischargeMos ? "ON" : "OFF");
-  d.setCursor(8, 270); d.printf("BAL %s  PROT %04X", s.data.balancing ? "ON" : "OFF", s.data.protectionFlags);
-  d.setTextColor(DisplayConfig::DARK_GREY); d.setCursor(8, 302); d.printf("Serial: 0 ana, 1/2 detay");
+
+  snprintf(text, sizeof(text), "MIN %.3f", state.data.minCellVoltage);
+  drawChangedText(display, fields_[11], text, 120, 96, 1, DisplayConfig::WHITE, 18);
+  snprintf(text, sizeof(text), "MAX %.3f", state.data.maxCellVoltage);
+  drawChangedText(display, fields_[12], text, 120, 112, 1, DisplayConfig::WHITE, 18);
+  snprintf(text, sizeof(text), "D %.0fmV", state.data.cellDelta * 1000.0f);
+  drawChangedText(display, fields_[13], text, 120, 128, 1, DisplayConfig::WHITE, 18);
+  snprintf(text, sizeof(text), "RSSI %d", state.rssi);
+  drawChangedText(display, fields_[14], text, 120, 152, 1, DisplayConfig::WHITE, 18);
+  snprintf(text, sizeof(text), "ERR %lu", static_cast<unsigned long>(state.errorCount));
+  drawChangedText(display, fields_[15], text, 120, 168, 1, DisplayConfig::WHITE, 18);
+
+  size_t used = snprintf(text, sizeof(text), "TEMP ");
+  for (uint8_t i = 0; i < state.data.temperatureCount && i < 3 && used < sizeof(text); ++i) {
+    used += snprintf(text + used, sizeof(text) - used, "%.1f%s", state.data.temperatures[i],
+                     i + 1 < state.data.temperatureCount && i < 2 ? "/" : "C");
+  }
+  drawChangedText(display, fields_[16], text, 8, 232, 1, DisplayConfig::WHITE, 36);
+
+  snprintf(text, sizeof(text), "CHG %s  DSG %s", state.data.chargeMos ? "ON" : "OFF",
+           state.data.dischargeMos ? "ON" : "OFF");
+  drawChangedText(display, fields_[17], text, 8, 252, 1, DisplayConfig::WHITE, 36);
+  snprintf(text, sizeof(text), "BAL %s  PROT %04X", state.data.balancing ? "ON" : "OFF",
+           state.data.protectionFlags);
+  drawChangedText(display, fields_[18], text, 8, 270, 1, DisplayConfig::WHITE, 36);
+  snprintf(text, sizeof(text), "ID %s", state.id.c_str());
+  drawChangedText(display, fields_[19], text, 8, 302, 1, DisplayConfig::DARK_GREY, 38);
 }

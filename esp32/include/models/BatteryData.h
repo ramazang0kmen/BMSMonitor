@@ -37,12 +37,21 @@ struct BmsDevice {
 };
 
 struct BmsDeviceState {
-  const char* name = "";
-  const char* mac = "";
+  String id;
+  String name;
+  String mac;
+  uint8_t addressType = 0;
+  uint16_t order = 0;
   bool connected = false;
+  bool discovered = false;
   int rssi = 0;
   uint32_t lastUpdateMs = 0;
   uint32_t updateIntervalMs = 0;
+  uint32_t staleAfterMs = 5000;
   uint32_t errorCount = 0;
   BatteryData data;
+
+  bool hasFreshData(uint32_t now) const {
+    return lastUpdateMs != 0 && now - lastUpdateMs <= staleAfterMs;
+  }
 };

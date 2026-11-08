@@ -10,18 +10,39 @@ JbdBmsClient::~JbdBmsClient() {
   if (client_) NimBLEDevice::deleteClient(client_);
 }
 
-void JbdBmsClient::begin(BmsDeviceState& device) {
+bool JbdBmsClient::attach(BmsDeviceState& device) {
+  if (device_ == &device) return true;
+  if (device_ || (client_ && client_->isConnected())) return false;
   device_ = &device;
-  if (client_) return;
+  failureEvent_ = false;
+  consecutiveResponseFailures_ = 0;
+  stage_ = Stage::Disconnected;
+  if (client_) return true;
   client_ = NimBLEDevice::createClient();
   if (!client_) {
-    Serial.printf("[ERROR] %s BLE client allocation failed\n", device_->name);
+    Serial.printf("[ERROR] %s BLE client allocation failed\n", device_->name.c_str());
     failureEvent_ = true;
-    return;
+    device_ = nullptr;
+    return false;
   }
   client_->setClientCallbacks(this, false);
   client_->setConnectionParams(12, 24, 0, 150);
   client_->setConnectTimeout(BmsConfig::CONNECT_TIMEOUT_MS);
+  return true;
+}
+
+void JbdBmsClient::release() {
+  BmsDeviceState* previous = device_;
+  device_ = nullptr;
+  if (previous) previous->connected = false;
+  intentionalDisconnect_ = true;
+  if (client_ && client_->isConnected()) client_->disconnect();
+  intentionalDisconnect_ = false;
+  notifyCharacteristic_ = nullptr;
+  writeCharacteristic_ = nullptr;
+  receiveBuffer_.clear();
+  failureEvent_ = false;
+  stage_ = Stage::Disconnected;
 }
 
 bool JbdBmsClient::startConnect(uint32_t now) {
@@ -33,8 +54,8 @@ bool JbdBmsClient::startConnect(uint32_t now) {
   cellsReceived_ = false;
   stage_ = Stage::Connecting;
   stageStartedMs_ = now;
-  Serial.printf("[INFO] %s connecting to %s\n", device_->name, device_->mac);
-  const NimBLEAddress address(device_->mac, BLE_ADDR_PUBLIC);
+  Serial.printf("[INFO] %s connecting to %s\n", device_->name.c_str(), device_->mac.c_str());
+  const NimBLEAddress address(device_->mac.c_str(), device_->addressType);
   // Async connect leaves loop() available for the second BMS and display.
   if (!client_->connect(address, true, true, true)) {
     stage_ = Stage::Disconnected;
@@ -116,7 +137,7 @@ bool JbdBmsClient::discoverJbdGatt(uint32_t now) {
   if (!subscribed) return false;
   stage_ = Stage::Settling;
   stageStartedMs_ = now;
-  Serial.printf("[INFO] %s connected | RSSI %d dBm\n", device_->name, client_->getRssi());
+  Serial.printf("[INFO] %s connected | RSSI %d dBm\n", device_->name.c_str(), client_->getRssi());
   return true;
 }
 
@@ -127,7 +148,7 @@ bool JbdBmsClient::sendJbdReadCommand(uint8_t registerAddress) {
                              static_cast<uint8_t>(checksum >> 8),
                              static_cast<uint8_t>(checksum), 0x77};
   if (BmsConfig::DEBUG_JBD_RAW) {
-    Serial.printf("[%s] TX: ", device_->name);
+    Serial.printf("[%s] TX: ", device_->name.c_str());
     printHex(command, sizeof(command));
   }
   return writeCharacteristic_->writeValue(command, sizeof(command), writeCharacteristic_->canWrite());
@@ -135,7 +156,7 @@ bool JbdBmsClient::sendJbdReadCommand(uint8_t registerAddress) {
 
 void JbdBmsClient::handleIncoming(const uint8_t* data, size_t length) {
   if (BmsConfig::DEBUG_JBD_RAW) {
-    Serial.printf("[%s] RX RAW: ", device_->name);
+    Serial.printf("[%s] RX RAW: ", device_->name.c_str());
     printHex(data, length);
   }
   if (!data || length == 0) return;
@@ -218,7 +239,7 @@ bool JbdBmsClient::parseCellInfo(const uint8_t* payload, size_t length) {
 void JbdBmsClient::markCommunicationFailure(const char* reason) {
   ++device_->errorCount;
   ++consecutiveResponseFailures_;
-  Serial.printf("[WARN] %s %s (errors=%lu)\n", device_->name, reason,
+  Serial.printf("[WARN] %s %s (errors=%lu)\n", device_->name.c_str(), reason,
                 static_cast<unsigned long>(device_->errorCount));
   if (consecutiveResponseFailures_ >= 3) disconnect();
   else { stage_ = Stage::Ready; nextPollMs_ = millis() + 500U; }
@@ -239,16 +260,17 @@ void JbdBmsClient::onConnectFail(NimBLEClient*, int reason) {
   if (device_) {
     device_->connected = false;
     ++device_->errorCount;
-    Serial.printf("[WARN] %s connect failed (reason %d)\n", device_->name, reason);
+    Serial.printf("[WARN] %s connect failed (reason %d)\n", device_->name.c_str(), reason);
   }
   stage_ = Stage::Disconnected;
   failureEvent_ = true;
 }
 
 void JbdBmsClient::onDisconnect(NimBLEClient*, int reason) {
+  if (intentionalDisconnect_ || !device_) return;
   if (device_) {
     device_->connected = false;
-    Serial.printf("[WARN] %s disconnected (reason %d)\n", device_->name, reason);
+    Serial.printf("[WARN] %s disconnected (reason %d)\n", device_->name.c_str(), reason);
   }
   stage_ = Stage::Disconnected;
   failureEvent_ = true;
@@ -256,6 +278,7 @@ void JbdBmsClient::onDisconnect(NimBLEClient*, int reason) {
 
 bool JbdBmsClient::consumeFailureEvent() { const bool value = failureEvent_; failureEvent_ = false; return value; }
 bool JbdBmsClient::isDisconnected() const { return stage_ == Stage::Disconnected; }
+bool JbdBmsClient::isConnecting() const { return stage_ == Stage::Connecting; }
 uint16_t JbdBmsClient::readBe16(const uint8_t* data) { return (static_cast<uint16_t>(data[0]) << 8) | data[1]; }
 void JbdBmsClient::printHex(const uint8_t* data, size_t length) {
   for (size_t i = 0; i < length; ++i) Serial.printf("%02X%s", data[i], i + 1 == length ? "\n" : " ");

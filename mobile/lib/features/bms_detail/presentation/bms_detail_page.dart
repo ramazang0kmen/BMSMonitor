@@ -13,12 +13,12 @@ import '../../dashboard/presentation/dashboard_cubit.dart';
 class BmsDetailPage extends StatelessWidget {
   const BmsDetailPage({
     required this.repository,
-    required this.bmsNumber,
+    required this.bmsId,
     super.key,
   });
 
   final FirebaseBmsRepository repository;
-  final int bmsNumber;
+  final String bmsId;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +31,7 @@ class BmsDetailPage extends StatelessWidget {
               .read<DashboardCubit>()
               .requestRemoteSession,
           requestOnInitialActive: false,
-          child: _BmsDetailView(bmsNumber: bmsNumber),
+          child: _BmsDetailView(bmsId: bmsId),
         ),
       ),
     );
@@ -39,14 +39,14 @@ class BmsDetailPage extends StatelessWidget {
 }
 
 class _BmsDetailView extends StatelessWidget {
-  const _BmsDetailView({required this.bmsNumber});
+  const _BmsDetailView({required this.bmsId});
 
-  final int bmsNumber;
+  final String bmsId;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('BMS $bmsNumber Detay')),
+      appBar: AppBar(title: const Text('BMS Detay')),
       body: BlocBuilder<DashboardCubit, DashboardState>(
         builder: (context, state) {
           final telemetry = state.telemetry;
@@ -62,16 +62,31 @@ class _BmsDetailView extends StatelessWidget {
               ),
             );
           }
-          final bms = bmsNumber == 1 ? telemetry.bms1 : telemetry.bms2;
+          final bmsIndex = telemetry.batteries.indexWhere(
+            (battery) => battery.id == bmsId,
+          );
+          if (bmsIndex < 0) {
+            return const Center(
+              child: Text('Bu BMS artık listede bulunmuyor.'),
+            );
+          }
+          final bms = telemetry.batteries[bmsIndex];
           final gatewayOnline = isGatewayOnline(
             state.status,
             state.now ?? DateTime.now(),
           );
           final online = gatewayOnline && bms.online;
+          final waitingForTurn = online && !bms.connected;
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
-              _DetailHeader(number: bmsNumber, battery: bms, online: online),
+              _DetailHeader(
+                number: bmsIndex + 1,
+                battery: bms,
+                online: online,
+                waitingForTurn: waitingForTurn,
+                now: state.now ?? DateTime.now(),
+              ),
               const SizedBox(height: 14),
               Opacity(
                 opacity: online ? 1 : 0.58,
@@ -96,11 +111,15 @@ class _DetailHeader extends StatelessWidget {
     required this.number,
     required this.battery,
     required this.online,
+    required this.waitingForTurn,
+    required this.now,
   });
 
   final int number;
   final BmsBattery battery;
   final bool online;
+  final bool waitingForTurn;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context) {
@@ -123,9 +142,25 @@ class _DetailHeader extends StatelessWidget {
             ],
           ),
         ),
-        StatusBadge(
-          label: online ? 'ONLINE' : 'OFFLINE · SON BİLİNEN',
-          color: color,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            StatusBadge(
+              label: waitingForTurn
+                  ? 'SIRASINI BEKLİYOR'
+                  : online
+                  ? 'ONLINE'
+                  : 'OFFLINE · SON BİLİNEN',
+              color: waitingForTurn
+                  ? Theme.of(context).colorScheme.tertiary
+                  : color,
+            ),
+            if (battery.lastSeen > 0)
+              Text(
+                relativeTime(battery.lastSeen, now),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
         ),
       ],
     );
